@@ -276,7 +276,8 @@ class Agent:
         system = (
             "You write a single-sentence, concrete cold-outreach hook per lead for "
             "an AI phone receptionist product. Use ONLY facts given below -- never "
-            "invent details not present in the facts."
+            "invent details not present in the facts. Never include phone numbers, "
+            "emails, or URLs in the hook."
         )
         user = f"Leads:\n{facts_block}\n\nWrite one hook sentence per lead id."
         schema_hint = '{"hooks": {"<lead_id>": "<one sentence hook>"}}'

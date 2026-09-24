@@ -13,7 +13,7 @@ if TYPE_CHECKING:  # avoid a circular import at module load time
 
 CSV_FIELDS = [
     "id", "name", "niche", "score", "phone", "emails", "website",
-    "has_booking", "chat_widget", "hook", "address", "opening_hours", "source_url",
+    "has_booking", "chat_widget", "reasons", "hook", "address", "opening_hours", "source_url",
 ]
 
 
@@ -35,6 +35,7 @@ def write_leads_csv(state: "RunState", path: Path) -> None:
                 "website": lead.website,
                 "has_booking": lead.has_booking,
                 "chat_widget": lead.chat_widget,
+                "reasons": "; ".join(lead.reasons),
                 "hook": lead.hook,
                 "address": lead.address,
                 "opening_hours": lead.opening_hours,
