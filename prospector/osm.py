@@ -188,12 +188,28 @@ def _build_query(bbox: BBox, niches: list[str]) -> str:
     return f"[out:json][timeout:60];\n(\n{body}\n);\nout center tags;\n"
 
 
-def _query_overpass(query: str, max_retries: int = 3) -> dict:
+OVERPASS_TOTAL_BUDGET_S = 90.0
+
+
+def _query_overpass(query: str, max_retries: int = 3, total_budget: float = OVERPASS_TOTAL_BUDGET_S) -> dict:
     """Run the query against each mirror in order, retrying with backoff
-    before falling through to the next mirror."""
+    before falling through to the next mirror.
+
+    Overpass can block a caller for a long time on a busy mirror, so the
+    whole function is capped at `total_budget` seconds wall-clock. A 429
+    (rate limited) or 504 (gateway timeout) response is not worth retrying
+    on the same mirror -- move to the next one immediately. The sleep after
+    the very last attempt (nothing left to retry) is skipped entirely.
+    """
+    start = time.monotonic()
     last_error: Exception | None = None
     for endpoint in OVERPASS_ENDPOINTS:
         for attempt in range(max_retries):
+            if time.monotonic() - start >= total_budget:
+                raise OSMError(
+                    f"Overpass query exceeded its {total_budget:.0f}s budget. Last error: {last_error}"
+                )
+            fast_fail = False
             try:
                 resp = requests.post(
                     endpoint,
@@ -204,15 +220,25 @@ def _query_overpass(query: str, max_retries: int = 3) -> dict:
                 if resp.status_code == 200:
                     return resp.json()
                 last_error = RuntimeError(f"{endpoint} returned HTTP {resp.status_code}")
+                fast_fail = resp.status_code in (429, 504)
             except Exception as exc:  # noqa: BLE001 - retry/fallback by design
                 last_error = exc
-            backoff = 2**attempt
-            print(
-                f"  [overpass] {endpoint} attempt {attempt + 1} failed "
-                f"({last_error}); retrying in {backoff}s",
-                file=sys.stderr,
-            )
-            time.sleep(backoff)
+
+            is_last_attempt = attempt == max_retries - 1
+            if fast_fail or is_last_attempt:
+                # Either this mirror told us to back off (429/504) or we're
+                # out of retries for it -- move to the next mirror right away.
+                break
+
+            remaining = total_budget - (time.monotonic() - start)
+            backoff = min(2**attempt, remaining)
+            if backoff > 0:
+                print(
+                    f"  [overpass] {endpoint} attempt {attempt + 1} failed "
+                    f"({last_error}); retrying in {backoff:.0f}s",
+                    file=sys.stderr,
+                )
+                time.sleep(backoff)
     raise OSMError(f"All Overpass endpoints failed. Last error: {last_error}")
 
 

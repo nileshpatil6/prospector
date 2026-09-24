@@ -1,9 +1,19 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from prospector import osm
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "overpass_response.json").read_text())
+
+
+class _FakeResp:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def json(self):
+        return FIXTURE
 
 
 def test_build_query_includes_niche_filters():
@@ -61,3 +71,59 @@ def test_bbox_widened_grows_around_center():
     wide = bbox.widened(2.0)
     assert wide.south == 5.0 and wide.north == 25.0
     assert wide.west == 5.0 and wide.east == 25.0
+
+
+# --- MED: Overpass 429/504 moves to the next mirror immediately (no sleep) -
+
+def test_query_overpass_fast_fails_on_429_without_sleeping(monkeypatch):
+    calls = []
+
+    def fake_post(url, data=None, headers=None, timeout=None):
+        calls.append(url)
+        if url == osm.OVERPASS_ENDPOINTS[0]:
+            return _FakeResp(429)
+        return _FakeResp(200)
+
+    sleeps = []
+    monkeypatch.setattr(osm.requests, "post", fake_post)
+    monkeypatch.setattr(osm.time, "sleep", lambda s: sleeps.append(s))
+
+    result = osm._query_overpass("fake query")
+
+    assert result == FIXTURE
+    # First endpoint hit exactly once (429 -> immediate move-on), never slept.
+    assert calls.count(osm.OVERPASS_ENDPOINTS[0]) == 1
+    assert sleeps == []
+
+
+def test_query_overpass_skips_sleep_after_final_attempt(monkeypatch):
+    # Every mirror returns a plain 500 (not fast-failed): retried up to
+    # max_retries times per mirror, but the very last attempt overall must
+    # not sleep afterward since there's nothing left to wait for.
+    monkeypatch.setattr(osm.requests, "post", lambda *a, **k: _FakeResp(500))
+    sleeps = []
+    monkeypatch.setattr(osm.time, "sleep", lambda s: sleeps.append(s))
+
+    with pytest.raises(osm.OSMError):
+        osm._query_overpass("fake query", max_retries=2)
+
+    total_calls = len(osm.OVERPASS_ENDPOINTS) * 2
+    # One sleep between each pair of attempts within a mirror, none after
+    # the last attempt of the last mirror.
+    assert len(sleeps) == total_calls - len(osm.OVERPASS_ENDPOINTS)
+
+
+def test_query_overpass_respects_total_time_budget(monkeypatch):
+    # Simulate a clock that has already blown the budget on the very first
+    # check: must raise promptly instead of grinding through every mirror.
+    monkeypatch.setattr(osm.requests, "post", lambda *a, **k: _FakeResp(500))
+    monkeypatch.setattr(osm.time, "sleep", lambda s: None)
+
+    clock = {"t": 0.0}
+    def fake_monotonic():
+        clock["t"] += 100.0  # first budget check already exceeds any budget
+        return clock["t"]
+    monkeypatch.setattr(osm.time, "monotonic", fake_monotonic)
+
+    with pytest.raises(osm.OSMError, match="budget"):
+        osm._query_overpass("fake query", total_budget=90.0)
