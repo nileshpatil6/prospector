@@ -39,7 +39,9 @@ in the final report traces back to something actually observed.
 
 ```mermaid
 flowchart TD
-    G[Goal text] --> P[PLAN: one LLM call]
+    UI[Next.js UI] -->|POST /api/runs, GET /api/runs/:id, POST /api/labels, POST /api/learn| API[FastAPI: server.py]
+    API -->|background thread| G[Goal text]
+    G --> P[PLAN: one LLM call]
     P --> S[RunState: place, niches, target_count, plan]
     S --> L{Loop until finish or max_steps}
     L --> T[LLM: thought + action + args]
@@ -48,6 +50,8 @@ flowchart TD
     O -->|persist state.json + trace.jsonl| L
     O -->|failure or low results| T
     L -->|finish| F[report.md + leads.csv]
+    API --> MEM[Memory: rules, labels, history]
+    API --> LRN[Learner: learn]
 ```
 
 Tools touch three real data sources:
@@ -123,8 +127,18 @@ reference.
 ```bash
 pip install -r requirements.txt
 cp .env.example .env   # fill in GEMINI_API_KEY
-streamlit run app.py
+uvicorn server:app --port 8000
 ```
+
+In another terminal:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open http://localhost:3000. (Or run `.\dev.ps1` from the repo root to start both at once.)
 
 Or via the CLI:
 
