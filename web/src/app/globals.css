@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+/* Operations-notebook palette: warm paper + near-black ink in light mode,
+   true charcoal + inverted ink logic in dark mode. One accent per signal
+   (ok/good, fail/bad, running), never used decoratively. */
+:root {
+  --paper: #f6f4ef;
+  --paper-raised: #efebe0;
+  --ink: #1a1a1a;
+  --ink-muted: #6b6558;
+  --rule: #dad3c3;
+  --ok: #1f7a4d;
+  --ok-soft: #e3ece5;
+  --fail: #b3412e;
+  --fail-soft: #f3e3df;
+  --running: #b7791f;
+  --running-soft: #f1e6d2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #141414;
+    --paper-raised: #1c1b18;
+    --ink: #ece8dd;
+    --ink-muted: #8c8676;
+    --rule: #322f28;
+    --ok: #45a879;
+    --ok-soft: #17251d;
+    --fail: #db7157;
+    --fail-soft: #2a1c17;
+    --running: #d9a544;
+    --running-soft: #2a2013;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-rule: var(--rule);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-fail: var(--fail);
+  --color-fail-soft: var(--fail-soft);
+  --color-running: var(--running);
+  --color-running-soft: var(--running-soft);
+  --font-display: var(--font-fraunces);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+}
+
+* {
+  border-color: var(--rule);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.step-enter {
+  animation: step-in 150ms ease-out both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+::selection {
+  background: var(--running-soft);
+  color: var(--ink);
+}

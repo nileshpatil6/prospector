@@ -1,8 +1,10 @@
 .env
-runs/
-data/
+/runs/
+/data/
 __pycache__/
 *.pyc
 .venv/
 *.egg-info/
 .pytest_cache/
+web/node_modules/
+web/.next/
