@@ -62,22 +62,33 @@ Tools touch three real data sources:
 ```mermaid
 flowchart LR
     U[User marks lead good/bad] --> M[Memory: labels.jsonl]
-    M --> SP[Deterministic 80/20 split\nby sha1(lead_id) % 5]
+    M --> SP[Deterministic 3-way split\nby sha1(lead_id) % 5:\n0=test 1=select rest=train]
     SP --> TR[Train: find leads the\ncurrent rules mis-score]
     TR --> LLM[ONE LLM call: propose up to\n5 candidate rules from misses\n+ feature catalogue]
-    LLM --> V[Validate: feature exists,\nop matches type, weight in range]
-    V --> H[Score each candidate ALONE\non the HOLDOUT split]
+    LLM --> V[Validate: object shape,\nfeature exists, op matches type,\nweight numeric + in range]
+    V --> H[Score each candidate ALONE\non the SELECT split]
     H -->|gain > 0 AND train acc\ndrop <= 2 pts| KEEP[Keep, add greedily,\nre-check against growing set]
     H -->|else| REJ[Reject + log reason]
-    KEEP --> RM[Try removing each old rule;\ndrop if holdout acc doesn't fall]
-    RM --> HIST[history.jsonl: acc_before/after,\np@10 before/after]
+    KEEP --> RM[Try removing each old rule\non SELECT; drop if it doesn't\nhurt -- or must strictly help\nwhen select has < 10 labels]
+    RM --> REP[Report acc + p@k on\nTEST only, never select]
+    REP --> HIST[history.jsonl: acc_before/after,\np@k before/after]
 ```
 
-The LLM proposing rules **never sees the holdout split** -- only misclassified
+The LLM proposing rules **never sees select or test data** -- only misclassified
 training leads. A unit test (`tests/test_learner.py`) inspects the exact prompt text
-sent to the LLM and asserts no holdout lead id appears in it. This is what makes the
-run-over-run accuracy chart in the Streamlit "Learn" tab honest rather than a vanity
-number.
+sent to the LLM and asserts no select/test lead id appears in it.
+
+Rules are chosen on the **select** split and graded on the **test** split, which are
+disjoint. Choosing and grading on the same data would make every accuracy number
+optimistic (a rule that merely overfits the validation set would still look like a
+win). When there isn't enough labeled data for a clean 3-way split (each of select
+and test needs at least 3 labels with both classes present), `learn()` falls back to
+select and test sharing the same records and marks the history entry
+`"note": "optimistic: selection and test share data"` so that's visible, not hidden.
+If even the combined set is too small, `learn()` refuses to touch memory at all and
+reports why instead of guessing. `p@k` uses `k = min(10, n_test // 2)` and is reported
+as unavailable when the test set has fewer than 4 labels, rather than a misleading
+number computed over 1-2 points.
 
 ## Honesty rules
 
@@ -86,17 +97,26 @@ number.
   `write_hooks` is explicitly instructed to use *only* facts already on the lead.
 - Scoring rules only ever reference `features.py` output (a small, typed, documented
   catalogue) -- never raw fields directly -- so every rule is auditable.
-- A learned rule is kept only if it improves **holdout** accuracy without dropping
-  train accuracy by more than 2 points. Nothing is kept because it "sounds right."
+- A learned rule is kept only if it improves **select-split** accuracy without
+  dropping train accuracy by more than 2 points. Nothing is kept because it "sounds
+  right," and nothing is graded on the same data used to pick it (see below).
+- `has_booking`/`chat_widget`/`has_contact_form` are only ever set from a page that
+  actually returned HTTP 200. A 403/404 error page is never scanned, so it can never
+  produce a false "no booking found" -- those fields stay `None`/unknown instead.
+  `chat_known` (a feature) is true only when the site was actually fetched
+  successfully, and the `no_chat_widget` scoring bonus only applies when
+  `chat_known` is true -- a lead that was never enriched gets no credit for an
+  absence it was never actually checked for.
 
 ## Feature catalogue
 
 `prospector/features.py` computes ~20 deterministic, side-effect-free features from a
-`Lead`: `has_website`, `site_ok`, `fetch_ok`, `has_email`, `email_count`, `has_phone`,
-`has_booking`, `booking_known`, `has_chat_widget`, `chat_vendor`, `chat_incumbent`,
-`has_contact_form`, `hours_known`, `open_24_7`, `open_weekends`, `address_known`,
-`niche`, `high_ticket_niche`, `research_has_text`, `research_mentions_phone_only`.
-These are the *only* inputs learned rules may reference.
+`Lead`: `has_website`, `site_ok`, `chat_known`, `fetch_ok`, `has_email`, `email_count`,
+`has_phone`, `has_booking`, `booking_known`, `has_chat_widget`, `chat_vendor`,
+`chat_incumbent`, `has_contact_form`, `hours_known`, `open_24_7`, `open_weekends`,
+`address_known`, `niche`, `high_ticket_niche`, `research_has_text`,
+`research_mentions_phone_only`. These are the *only* inputs learned rules may
+reference.
 
 ## Setup
 

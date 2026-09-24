@@ -44,6 +44,42 @@ def _load_run(run_id: str) -> RunState:
     return RunState.from_dict(data)
 
 
+def _download_button(label: str, data: bytes, file_name: str, key: str) -> None:
+    """st.download_button triggers a script rerun on click in older Streamlit
+    versions, which (without care) can look like the run's results vanished.
+    Newer versions accept on_click="ignore" to skip that rerun; fall back to
+    a plain keyed button on versions that don't support it. Either way, the
+    actual results are rendered from disk (see below), not from this
+    button's branch, so a rerun here never loses them."""
+    try:
+        st.download_button(label, data, file_name=file_name, key=key, on_click="ignore")
+    except TypeError:
+        st.download_button(label, data, file_name=file_name, key=key)
+
+
+def _render_run_results(run_id: str) -> None:
+    """Render a run's leads table + report from disk. Called unconditionally
+    on every script execution (not inside the Run button's branch), so a
+    Streamlit rerun triggered by anything else on the page -- a Review tab
+    Good/Bad click, a download button -- never wipes the last run's results."""
+    state_path = RUNS_DIR / run_id / "state.json"
+    if not state_path.exists():
+        return
+    state = _load_run(run_id)
+    st.success(f"Run {state.run_id} finished with status={state.status}")
+    if state.leads:
+        df = pd.DataFrame([ld.to_dict() for ld in state.leads.values()]).sort_values(
+            "score", ascending=False
+        )
+        st.dataframe(df[["name", "niche", "score", "phone", "website", "hook"]])
+        csv_path = RUNS_DIR / run_id / "leads.csv"
+        if csv_path.exists():
+            _download_button("Download CSV", csv_path.read_bytes(), f"{run_id}_leads.csv", key=f"dl_{run_id}")
+    report_path = RUNS_DIR / run_id / "report.md"
+    if report_path.exists():
+        st.markdown(report_path.read_text(encoding="utf-8"))
+
+
 tab_run, tab_review, tab_learn = st.tabs(["Run", "Review", "Learn"])
 
 with tab_run:
@@ -63,24 +99,17 @@ with tab_run:
                 log_lines.append(f"[{step.n:02d}] ({status}) {step.action}({step.args}) -> {step.observation}")
                 feed.code("\n".join(log_lines))
 
-            agent = Agent(GeminiLLM(), MEMORY, max_steps=int(max_steps), runs_dir=RUNS_DIR, on_step=on_step)
+            agent = Agent(llm, MEMORY, max_steps=int(max_steps), runs_dir=RUNS_DIR, on_step=on_step)
             with st.spinner("Running agent..."):
                 state = agent.run(goal)
+            # Agent.run() always persists state.json/leads.csv/report.md
+            # (try/finally, even on failure) before returning, so it's safe
+            # to remember just the id here and render from disk below.
+            st.session_state["last_run_id"] = state.run_id
 
-            st.success(f"Run {state.run_id} finished with status={state.status}")
-            if state.leads:
-                df = pd.DataFrame([ld.to_dict() for ld in state.leads.values()]).sort_values(
-                    "score", ascending=False
-                )
-                st.dataframe(df[["name", "niche", "score", "phone", "website", "hook"]])
-                st.download_button(
-                    "Download CSV",
-                    (RUNS_DIR / state.run_id / "leads.csv").read_bytes(),
-                    file_name=f"{state.run_id}_leads.csv",
-                )
-            report_path = RUNS_DIR / state.run_id / "report.md"
-            if report_path.exists():
-                st.markdown(report_path.read_text(encoding="utf-8"))
+    last_run_id = st.session_state.get("last_run_id")
+    if last_run_id:
+        _render_run_results(last_run_id)
 
 with tab_review:
     run_ids = _list_run_ids()
@@ -119,8 +148,11 @@ with tab_learn:
             st.write(report.message)
             if report.ok:
                 col1, col2 = st.columns(2)
-                col1.metric("Holdout accuracy", f"{report.acc_after:.1f}%", f"{report.acc_after - report.acc_before:+.1f}")
-                col2.metric("Precision@10", f"{report.p_at_10_after:.1f}%", f"{report.p_at_10_after - report.p_at_10_before:+.1f}")
+                col1.metric("Test accuracy", f"{report.acc_after:.1f}%", f"{report.acc_after - report.acc_before:+.1f}")
+                if report.p_at_10_after is None or report.p_at_10_before is None:
+                    col2.metric("Precision@k", "n/a (test set too small)")
+                else:
+                    col2.metric("Precision@k", f"{report.p_at_10_after:.1f}%", f"{report.p_at_10_after - report.p_at_10_before:+.1f}")
 
                 if report.added:
                     st.write("**Added rules**")

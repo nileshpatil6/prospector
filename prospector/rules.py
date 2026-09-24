@@ -117,7 +117,7 @@ def base_score(feats: dict[str, bool | float | str]) -> tuple[float, list[str]]:
         add(15, "has_email")
     if feats["booking_known"] and not feats["has_booking"]:
         add(20, "no_online_booking")
-    if not feats["has_chat_widget"]:
+    if feats["chat_known"] and not feats["has_chat_widget"]:
         add(10, "no_chat_widget")
     if feats["chat_incumbent"]:
         add(-15, "chat_incumbent")

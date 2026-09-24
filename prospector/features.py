@@ -7,6 +7,8 @@ the Lead -- nothing here makes a network call or invents data.
 
 from __future__ import annotations
 
+import re
+
 from prospector.osm import Lead
 
 # Declared type for every feature, used by rules.py to validate that a rule's
@@ -15,6 +17,7 @@ from prospector.osm import Lead
 FEATURE_TYPES: dict[str, type] = {
     "has_website": bool,
     "site_ok": bool,
+    "chat_known": bool,
     "fetch_ok": bool,
     "has_email": bool,
     "email_count": float,
@@ -38,7 +41,13 @@ FEATURE_TYPES: dict[str, type] = {
 HIGH_TICKET_NICHES = {"dentist", "lawyer", "plumber", "hvac", "roofer", "med_spa", "chiropractor", "vet"}
 CHAT_INCUMBENTS = {"podium", "birdeye"}
 
-_WEEKEND_TOKENS = ("sa", "su")  # "Sa", "Su" day codes in opening_hours syntax
+# Whole-word "Sa"/"Su" day tokens (OSM opening_hours abbreviations), e.g. the
+# "Su" in "Mo-Su 09:00-18:00" or in "Sa,Su off". Word boundaries keep this
+# from matching inside unrelated text.
+_WEEKEND_DAY_RE = re.compile(r"\b(sa|su)\b", re.IGNORECASE)
+# A day token followed by "off"/"closed" (anywhere later in the same clause)
+# means explicitly NOT open, e.g. "Su off" or "Sa,Su off".
+_CLOSED_RE = re.compile(r"\boff\b|\bclosed\b", re.IGNORECASE)
 
 
 def _looks_24_7(opening_hours: str) -> bool:
@@ -46,8 +55,15 @@ def _looks_24_7(opening_hours: str) -> bool:
 
 
 def _looks_open_weekends(opening_hours: str) -> bool:
-    hours = opening_hours.lower()
-    return any(tok in hours for tok in _WEEKEND_TOKENS) or _looks_24_7(opening_hours)
+    if _looks_24_7(opening_hours):
+        return True
+    # opening_hours clauses are ";"-separated; a weekend day token only
+    # counts as "open" if that same clause isn't marked off/closed, so
+    # "Mo-Fr 09:00-18:00; Sa,Su off" correctly reads as NOT open weekends.
+    for clause in opening_hours.split(";"):
+        if _WEEKEND_DAY_RE.search(clause) and not _CLOSED_RE.search(clause):
+            return True
+    return False
 
 
 def features(lead: Lead) -> dict[str, bool | float | str]:
@@ -60,6 +76,10 @@ def features(lead: Lead) -> dict[str, bool | float | str]:
     return {
         "has_website": bool(lead.website),
         "site_ok": bool(lead.site_ok),
+        # True only when we actually fetched the site successfully, so a
+        # confirmed absence of a chat widget is distinguishable from "never
+        # checked" (no website, fetch failed, or never enriched).
+        "chat_known": lead.site_ok is True,
         "fetch_ok": lead.fetch_error == "",
         "has_email": bool(emails),
         "email_count": float(len(emails)),

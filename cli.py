@@ -54,8 +54,10 @@ def cmd_learn(args: argparse.Namespace) -> int:
     report = learn(memory, llm)
     print(report.message)
     if report.ok:
-        print(f"Holdout accuracy: {report.acc_before:.1f}% -> {report.acc_after:.1f}%")
-        print(f"p@10: {report.p_at_10_before:.1f}% -> {report.p_at_10_after:.1f}%")
+        print(f"Test accuracy: {report.acc_before:.1f}% -> {report.acc_after:.1f}%")
+        p_before = "n/a" if report.p_at_10_before is None else f"{report.p_at_10_before:.1f}%"
+        p_after = "n/a" if report.p_at_10_after is None else f"{report.p_at_10_after:.1f}%"
+        print(f"p@k: {p_before} -> {p_after}")
         print(f"Added: {[r.id for r in report.added]}")
         print(f"Removed: {[r.id for r in report.removed]}")
     return 0

@@ -47,6 +47,30 @@ def test_features_24_7_and_weekends():
     assert feats["open_weekends"] is True
 
 
+def test_features_open_weekends_true_when_weekend_hours_given():
+    feats = features(_lead(opening_hours="Mo-Fr 09:00-18:00; Sa 10:00-14:00"))
+    assert feats["open_weekends"] is True
+
+
+def test_features_open_weekends_false_when_explicitly_off():
+    # MED regression: "Su off" and "Sa,Su off" contain the day token "su"/"sa"
+    # as a substring, but explicitly mean NOT open that day.
+    feats = features(_lead(opening_hours="Mo-Fr 09:00-18:00; Su off"))
+    assert feats["open_weekends"] is False
+
+    feats2 = features(_lead(opening_hours="Mo-Fr 09:00-18:00; Sa,Su off"))
+    assert feats2["open_weekends"] is False
+
+
+def test_features_chat_known_requires_confirmed_site_ok():
+    # site_ok True: the page was actually fetched, so absence of a chat
+    # widget is a confirmed observation.
+    assert features(_lead(site_ok=True))["chat_known"] is True
+    # site_ok False or None (never fetched / fetch failed): unknown, not "no".
+    assert features(_lead(site_ok=False))["chat_known"] is False
+    assert features(_lead(site_ok=None))["chat_known"] is False
+
+
 def test_apply_all_operators():
     feats = {"has_phone": True, "email_count": 3.0, "niche": "dentist"}
     assert apply(Rule("r1", "has_phone", "is_true", None, 1), feats) is True
@@ -81,6 +105,22 @@ def test_validate_rule_catches_out_of_range_weight():
 def test_validate_rule_accepts_valid_rule():
     err = validate_rule(Rule("r1", "has_phone", "is_true", None, 10))
     assert err is None
+
+
+def test_base_score_no_chat_widget_bonus_requires_chat_known():
+    # HIGH regression: a lead that was never enriched (site_ok is None, so
+    # chat_widget is still "") must NOT get credit for "no chat widget" --
+    # that absence was never actually confirmed.
+    never_enriched = _lead(site_ok=None, chat_widget="", fetch_error="")
+    s_unknown, reasons_unknown = score(never_enriched, [])
+    assert not any("no_chat_widget" in r for r in reasons_unknown)
+
+    # A lead that WAS successfully fetched (site_ok True) and genuinely has
+    # no chat widget gets the bonus.
+    confirmed_no_chat = _lead(site_ok=True, chat_widget="")
+    s_confirmed, reasons_confirmed = score(confirmed_no_chat, [])
+    assert any("no_chat_widget" in r for r in reasons_confirmed)
+    assert s_confirmed > s_unknown
 
 
 def test_score_clamps_to_0_100():

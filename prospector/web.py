@@ -46,10 +46,23 @@ BOOKING_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-CHAT_VENDORS = [
-    "podium", "birdeye", "intercom", "tidio", "drift", "tawk.to",
-    "livechat", "hubspot", "crisp", "olark", "gorgias",
-]
+# Vendor name -> script/iframe src domain substrings that actually indicate
+# the widget is embedded. Matched only against src attributes and inline
+# script bodies, never visible page text -- prose like "crisp dosas" or
+# "video intercom" must never be mistaken for the chat vendor.
+CHAT_VENDOR_DOMAINS: dict[str, list[str]] = {
+    "podium": ["connect.podium.com", "podium.com/widget"],
+    "birdeye": ["birdeye.com/js", "bl-1.com"],
+    "intercom": ["widget.intercom.io", "js.intercomcdn.com"],
+    "tidio": ["code.tidio.co"],
+    "drift": ["js.driftt.com", "widget.drift.com"],
+    "tawk.to": ["embed.tawk.to"],
+    "livechat": ["cdn.livechatinc.com"],
+    "hubspot": ["js.hs-scripts.com", "js.usemessages.com", "js.hubspot.com", "js.hs-banner.com"],
+    "crisp": ["client.crisp.chat"],
+    "olark": ["static.olark.com"],
+    "gorgias": ["config.gorgias.chat"],
+}
 
 
 def _is_junk_email(email: str) -> bool:
@@ -115,14 +128,18 @@ def _detect_booking(soup: BeautifulSoup) -> bool:
     return False
 
 
-def _detect_chat_widget(soup: BeautifulSoup, page_text_lower: str) -> str:
-    for script in soup.find_all("script", src=True):
-        src = script["src"].lower()
-        for vendor in CHAT_VENDORS:
-            if vendor in src:
-                return vendor
-    for vendor in CHAT_VENDORS:
-        if vendor in page_text_lower:
+def _detect_chat_widget(soup: BeautifulSoup) -> str:
+    """Match only script/iframe src attributes and inline script bodies
+    against known vendor domains. Never scans visible page text: ordinary
+    prose ("crisp dosas", "video intercom") would false-positive constantly."""
+    sources = [t["src"].lower() for t in soup.find_all("script", src=True)]
+    sources += [t["src"].lower() for t in soup.find_all("iframe", src=True)]
+    inline_bodies = [t.get_text().lower() for t in soup.find_all("script", src=False)]
+
+    for vendor, domains in CHAT_VENDOR_DOMAINS.items():
+        if any(domain in src for src in sources for domain in domains):
+            return vendor
+        if any(domain in body for body in inline_bodies for domain in domains):
             return vendor
     return ""
 
@@ -167,23 +184,26 @@ def enrich(lead: Lead, timeout: int = 10) -> Lead:
             site_domain = site_domain[4:]
 
         all_emails: list[str] = []
-        booking = False
+        # None means "not observed" (honesty invariant): only a page we
+        # actually parsed at HTTP 200 may turn these into a real True/False.
+        booking: bool | None = None
         chat = ""
-        contact_form = False
+        contact_form: bool | None = None
+        processed_any = False
         base_url = resp.url
 
         def process(page_resp: requests.Response) -> None:
-            nonlocal booking, chat, contact_form
+            nonlocal booking, chat, contact_form, processed_any
             try:
                 soup = BeautifulSoup(page_resp.text, "html.parser")
             except Exception:  # noqa: BLE001
                 return
+            processed_any = True
             # Booking/chat vendor detection reads <script src>/<a href>, so it
             # must run before scripts are stripped for the plain-text scan below.
             if _detect_booking(soup):
                 booking = True
-            page_text_lower = soup.get_text(separator=" ", strip=True).lower()
-            found_chat = _detect_chat_widget(soup, page_text_lower)
+            found_chat = _detect_chat_widget(soup)
             if found_chat and not chat:
                 chat = found_chat
             if _detect_contact_form(soup):
@@ -196,7 +216,11 @@ def enrich(lead: Lead, timeout: int = 10) -> Lead:
                 if email not in all_emails:
                     all_emails.append(email)
 
-        process(resp)
+        # Only parse pages that actually loaded. A 403/404 error page must
+        # never be scanned -- it would silently record "no booking found"
+        # etc. for a site we never really saw.
+        if resp.status_code == 200:
+            process(resp)
         extra_fetches = 0
         for path in EXTRA_PATHS:
             if extra_fetches >= 3:
@@ -208,6 +232,14 @@ def enrich(lead: Lead, timeout: int = 10) -> Lead:
             extra_fetches += 1
             if extra_resp.status_code == 200:
                 process(extra_resp)
+
+        # A page was successfully checked and the signal simply wasn't
+        # there: that's a confirmed False, not "unknown".
+        if processed_any:
+            if booking is None:
+                booking = False
+            if contact_form is None:
+                contact_form = False
 
         result.emails = all_emails
         result.has_booking = booking

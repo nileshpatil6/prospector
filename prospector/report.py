@@ -93,10 +93,15 @@ def write_report(state: "RunState", memory: Memory, path: Path) -> None:
     history = memory.get_history()
     if history:
         last = history[-1]
+
+        def _fmt(value: object) -> str:
+            return "n/a" if value is None else f"{value:.1f}%"
+
+        note = f" ({last['note']})" if last.get("note") else ""
         lines.append(
-            f"\nLast learning run: holdout accuracy {last.get('acc_before', 0):.1f}% -> "
-            f"{last.get('acc_after', 0):.1f}%, p@10 {last.get('p_at_10_before', 0):.1f}% -> "
-            f"{last.get('p_at_10_after', 0):.1f}%."
+            f"\nLast learning run: test accuracy {_fmt(last.get('acc_before', 0))} -> "
+            f"{_fmt(last.get('acc_after', 0))}, p@k {_fmt(last.get('p_at_10_before'))} -> "
+            f"{_fmt(last.get('p_at_10_after'))}.{note}"
         )
     lines.append("")
 
