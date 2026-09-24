@@ -1,0 +1,45 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 111,
+      "lat": 18.52,
+      "lon": 73.85,
+      "tags": {
+        "amenity": "dentist",
+        "name": "Smile Dental Clinic",
+        "phone": "+91 20 1234 5678",
+        "website": "https://smiledental.example",
+        "opening_hours": "Mo-Fr 09:00-18:00"
+      }
+    },
+    {
+      "type": "way",
+      "id": 222,
+      "center": {"lat": 18.53, "lon": 73.86},
+      "tags": {
+        "healthcare": "dentist",
+        "name": "Pune Dental Care",
+        "addr:street": "FC Road",
+        "addr:city": "Pune"
+      }
+    },
+    {
+      "type": "node",
+      "id": 333,
+      "lat": 18.54,
+      "lon": 73.87,
+      "tags": {}
+    },
+    {
+      "type": "node",
+      "id": 111,
+      "lat": 18.52,
+      "lon": 73.85,
+      "tags": {
+        "amenity": "dentist",
+        "name": "Smile Dental Clinic"
+      }
+    }
+  ]
+}
