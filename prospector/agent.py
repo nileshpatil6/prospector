@@ -394,8 +394,12 @@ class Agent:
 
     # -- Main loop --------------------------------------------------------
 
-    def run(self, goal: str) -> RunState:
-        run_id = f"run_{int(time.time())}"
+    def run(self, goal: str, run_id: str | None = None) -> RunState:
+        # A caller (e.g. the FastAPI server) may need the run_id before the
+        # run starts, to hand it back to a client immediately while the run
+        # itself executes in a background thread. Generate it the same way
+        # as before when none is given, so existing callers are unaffected.
+        run_id = run_id or f"run_{int(time.time())}"
         state = RunState(run_id=run_id, goal=goal)
 
         try:

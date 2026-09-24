@@ -54,6 +54,28 @@ class Memory:
         with self.labels_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
+    def remove_label(self, lead_id: str) -> bool:
+        """Remove all label records for a lead id by rewriting labels.jsonl
+        without them. Returns True iff at least one record was removed."""
+        if not self.labels_path.exists():
+            return False
+        kept: list[str] = []
+        removed = False
+        with self.labels_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                record = json.loads(line)
+                if record["lead_id"] == lead_id:
+                    removed = True
+                    continue
+                kept.append(line)
+        if removed:
+            content = "\n".join(kept) + ("\n" if kept else "")
+            self.labels_path.write_text(content, encoding="utf-8")
+        return removed
+
     def get_labels(self) -> list[dict]:
         """All labels, deduped by lead_id, last label wins."""
         if not self.labels_path.exists():
