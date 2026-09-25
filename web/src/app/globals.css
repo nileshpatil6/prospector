@@ -1,77 +1,91 @@
 @import "tailwindcss";
 
-/* Operations-notebook palette: warm paper + near-black ink in light mode,
-   true charcoal + inverted ink logic in dark mode. One accent per signal
-   (ok/good, fail/bad, running), never used decoratively. */
+/* Prospector: dark-only "radar for your next customers". One signal
+   accent (lime) for primary/ok, coral for fail, amber for running/warn.
+   No purple, no gradients-as-decoration, no glassmorphism. */
 :root {
-  --paper: #f6f4ef;
-  --paper-raised: #efebe0;
-  --ink: #1a1a1a;
-  --ink-muted: #6b6558;
-  --rule: #dad3c3;
-  --ok: #1f7a4d;
-  --ok-soft: #e3ece5;
-  --fail: #b3412e;
-  --fail-soft: #f3e3df;
-  --running: #b7791f;
-  --running-soft: #f1e6d2;
-}
+  --bg: #0a0b0d;
+  --surface: #111318;
+  --raised: #171a20;
+  --hairline: #22262e;
+  --text: #eceef1;
+  --muted: #8b919b;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #141414;
-    --paper-raised: #1c1b18;
-    --ink: #ece8dd;
-    --ink-muted: #8c8676;
-    --rule: #322f28;
-    --ok: #45a879;
-    --ok-soft: #17251d;
-    --fail: #db7157;
-    --fail-soft: #2a1c17;
-    --running: #d9a544;
-    --running-soft: #2a2013;
-  }
+  --lime: #d4ff3a;
+  --lime-soft: rgba(212, 255, 58, 0.12);
+  --coral: #ff5a4e;
+  --coral-soft: rgba(255, 90, 78, 0.12);
+  --amber: #ffb224;
+  --amber-soft: rgba(255, 178, 36, 0.12);
 }
 
 @theme inline {
-  --color-paper: var(--paper);
-  --color-paper-raised: var(--paper-raised);
-  --color-ink: var(--ink);
-  --color-ink-muted: var(--ink-muted);
-  --color-rule: var(--rule);
-  --color-ok: var(--ok);
-  --color-ok-soft: var(--ok-soft);
-  --color-fail: var(--fail);
-  --color-fail-soft: var(--fail-soft);
-  --color-running: var(--running);
-  --color-running-soft: var(--running-soft);
-  --font-display: var(--font-fraunces);
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-jetbrains-mono);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hairline: var(--hairline);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-lime: var(--lime);
+  --color-lime-soft: var(--lime-soft);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --font-display: var(--font-geist);
+  --font-sans: var(--font-geist);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-instrument-serif);
 }
 
 * {
-  border-color: var(--rule);
+  border-color: var(--hairline);
+}
+
+html {
+  color-scheme: dark;
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--bg);
+  color: var(--text);
+  font-feature-settings: "tnum" 1, "cv11" 1;
 }
 
-@keyframes step-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* -- Backgrounds --------------------------------------------------- */
+
+.bg-dot-grid {
+  background-image: radial-gradient(circle, var(--hairline) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+.bg-radar-rings {
+  background-image:
+    radial-gradient(circle at center, transparent 0, transparent 79px, var(--hairline) 80px, transparent 81px),
+    radial-gradient(circle at center, transparent 0, transparent 159px, var(--hairline) 160px, transparent 161px),
+    radial-gradient(circle at center, transparent 0, transparent 239px, var(--hairline) 240px, transparent 241px),
+    radial-gradient(circle at center, transparent 0, transparent 319px, var(--hairline) 320px, transparent 321px);
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+/* -- Motion ---------------------------------------------------------
+   All keyframe-driven decorative motion is gated behind this class,
+   which JS removes when prefers-reduced-motion is set. */
+
+@keyframes radar-spin {
   to {
-    opacity: 1;
-    transform: translateY(0);
+    transform: rotate(360deg);
   }
 }
 
-.step-enter {
-  animation: step-in 150ms ease-out both;
+.motion-ok .radar-sweep {
+  animation: radar-spin 3.2s linear infinite;
 }
 
 @keyframes pulse-dot {
@@ -84,11 +98,114 @@ body {
   }
 }
 
-.pulse-dot {
+.motion-ok .pulse-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
 }
 
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  50%,
+  95% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.motion-ok .type-caret {
+  animation: caret-blink 0.9s step-end infinite;
+}
+
+@keyframes tick-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.motion-ok .tick-pop {
+  animation: tick-pop 260ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes pin-drop {
+  0% {
+    transform: translateY(-10px) scale(0.5);
+    opacity: 0;
+  }
+  70% {
+    transform: translateY(1px) scale(1.08);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+.motion-ok .pin-drop {
+  animation: pin-drop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
 ::selection {
-  background: var(--running-soft);
-  color: var(--ink);
+  background: var(--lime-soft);
+  color: var(--text);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--hairline);
+  border-radius: 6px;
+}
+
+/* Leaflet dark tuning: the CARTO dark tiles are already dark, but the
+   default leaflet chrome (attribution bg, popup) is light. */
+.leaflet-container {
+  background: var(--surface) !important;
+  font-family: var(--font-sans);
+}
+
+.leaflet-control-attribution {
+  background: rgba(17, 19, 24, 0.75) !important;
+  color: var(--muted) !important;
+  font-size: 10px !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--muted) !important;
+}
+
+.leaflet-control-zoom a {
+  background: var(--raised) !important;
+  color: var(--text) !important;
+  border-color: var(--hairline) !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: var(--surface) !important;
+}
+
+.prospector-pin {
+  border-radius: 999px;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
 }

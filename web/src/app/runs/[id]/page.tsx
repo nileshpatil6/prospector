@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   deleteLabel,
@@ -11,22 +11,27 @@ import {
   getRun,
   postLabel,
 } from "@/lib/api";
-import type { Label, Lead, LabelsSummary, RunState } from "@/lib/types";
-import { StatusBar } from "@/components/StatusBar";
-import { LeadsTable } from "@/components/LeadsTable";
-
-type Filter = "all" | "unlabelled";
+import type { Label, LabelsSummary, RunState } from "@/lib/types";
+import { Ledger } from "@/components/review/Ledger";
+import { DetailPanel } from "@/components/review/DetailPanel";
+import { FilterTabs, type ReviewFilter } from "@/components/review/FilterTabs";
+import { ProgressMeter } from "@/components/review/ProgressMeter";
+import { ShortcutLegend } from "@/components/review/ShortcutLegend";
+import { useToast } from "@/components/Toast";
+import { FileText, Download } from "lucide-react";
 
 export default function ReviewPage() {
   const params = useParams<{ id: string }>();
   const runId = params.id;
+  const toast = useToast();
 
   const [run, setRun] = useState<RunState | null>(null);
   const [labels, setLabels] = useState<Record<string, Label>>({});
   const [summary, setSummary] = useState<LabelsSummary | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [toggleError, setToggleError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<ReviewFilter>("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -44,118 +49,163 @@ export default function ReviewPage() {
   }, [runId]);
 
   useEffect(() => {
-    // Fetch on mount; `load` only calls setState after an awaited response.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
-  async function handleToggle(lead: Lead, next: Label | null) {
-    const previous = labels[lead.id] ?? null;
-    setToggleError(null);
-    setLabels((old) => {
-      const copy = { ...old };
-      if (next === null) delete copy[lead.id];
-      else copy[lead.id] = next;
-      return copy;
-    });
-    try {
-      if (next === null) {
-        await deleteLabel(lead.id);
-      } else {
-        await postLabel(runId, lead.id, next);
-      }
-      const s = await getLabelsSummary();
-      setSummary(s);
-    } catch (err) {
-      // revert the optimistic update
+  const allLeads = useMemo(() => (run ? Object.values(run.leads) : []), [run]);
+  const visibleLeads = useMemo(() => {
+    const sorted = [...allLeads].sort((a, b) => b.score - a.score);
+    if (filter === "unlabelled") return sorted.filter((l) => !labels[l.id]);
+    if (filter === "good") return sorted.filter((l) => labels[l.id] === "good");
+    if (filter === "bad") return sorted.filter((l) => labels[l.id] === "bad");
+    return sorted;
+  }, [allLeads, labels, filter]);
+
+  useEffect(() => {
+    // Keeps selection valid as the filter changes the visible set -- a
+    // deliberate sync of derived state, not an avoidable effect.
+    if (visibleLeads.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !visibleLeads.some((l) => l.id === selectedId)) {
+      setSelectedId(visibleLeads[0].id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleLeads]);
+
+  const handleToggle = useCallback(
+    async (leadId: string, next: Label | null) => {
+      const previous = labels[leadId] ?? null;
+      if (previous === next) return;
+      setPendingId(leadId);
       setLabels((old) => {
         const copy = { ...old };
-        if (previous === null) delete copy[lead.id];
-        else copy[lead.id] = previous;
+        if (next === null) delete copy[leadId];
+        else copy[leadId] = next;
         return copy;
       });
-      setToggleError(errorMessage(err));
+      try {
+        if (next === null) {
+          await deleteLabel(leadId);
+        } else {
+          await postLabel(runId, leadId, next);
+        }
+        const s = await getLabelsSummary();
+        setSummary(s);
+        toast.push(next ? `Marked ${next}` : "Label cleared", "ok");
+      } catch (err) {
+        setLabels((old) => {
+          const copy = { ...old };
+          if (previous === null) delete copy[leadId];
+          else copy[leadId] = previous;
+          return copy;
+        });
+        toast.push(errorMessage(err), "fail");
+      } finally {
+        setPendingId(null);
+      }
+    },
+    [labels, runId, toast]
+  );
+
+  // Keyboard shortcuts: J/K or arrows move selection, G/B label, U clears.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA"].includes(target.tagName)) return;
+      if (visibleLeads.length === 0) return;
+
+      const idx = visibleLeads.findIndex((l) => l.id === selectedId);
+
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const next = visibleLeads[Math.min(visibleLeads.length - 1, idx + 1)];
+        if (next) setSelectedId(next.id);
+      } else if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prev = visibleLeads[Math.max(0, idx - 1)];
+        if (prev) setSelectedId(prev.id);
+      } else if ((e.key === "g" || e.key === "G") && selectedId) {
+        handleToggle(selectedId, labels[selectedId] === "good" ? null : "good");
+      } else if ((e.key === "b" || e.key === "B") && selectedId) {
+        handleToggle(selectedId, labels[selectedId] === "bad" ? null : "bad");
+      } else if ((e.key === "u" || e.key === "U") && selectedId) {
+        handleToggle(selectedId, null);
+      }
     }
-  }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [visibleLeads, selectedId, labels, handleToggle]);
 
   if (loadError) {
-    return <p className="text-sm text-fail">{loadError}</p>;
+    return <p className="text-sm text-coral p-6">{loadError}</p>;
   }
   if (!run) {
-    return <p className="text-sm text-ink-muted italic">Loading...</p>;
+    return <p className="text-sm text-muted italic p-6">Loading...</p>;
   }
 
-  const allLeads = Object.values(run.leads);
-  const visibleLeads =
-    filter === "unlabelled"
-      ? allLeads.filter((lead) => !labels[lead.id])
-      : allLeads;
+  const selectedLead = allLeads.find((l) => l.id === selectedId) ?? null;
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-3">
-        <h1 className="font-display text-3xl text-ink">{run.goal}</h1>
-        <div className="flex flex-wrap items-center gap-3">
-          <StatusBar
-            status={run.status}
-            detail={`${allLeads.length} lead${allLeads.length === 1 ? "" : "s"}`}
-          />
-          <a
-            href={getReportUrl(run.run_id)}
-            target="_blank"
-            rel="noreferrer"
-            className="text-sm px-3 py-1.5 border border-rule rounded-sm text-ink hover:border-ink transition-colors"
-          >
-            View report
-          </a>
-          <a
-            href={getCsvUrl(run.run_id)}
-            className="text-sm px-3 py-1.5 border border-rule rounded-sm text-ink hover:border-ink transition-colors"
-          >
-            Download CSV
-          </a>
-        </div>
-      </div>
-
-      {summary && (
-        <div className="sticky top-14 z-10 -mx-4 sm:-mx-6 px-4 sm:px-6 py-2.5 bg-paper/95 backdrop-blur border-y border-rule text-sm flex flex-wrap items-center justify-between gap-2">
-          <span className="text-ink">
-            <span className="font-mono">{summary.total}</span> labelled (
-            <span className="text-ok font-mono">{summary.good} good</span>,{" "}
-            <span className="text-fail font-mono">{summary.bad} bad</span>)
-            {!summary.ready && summary.need && (
-              <span className="text-ink-muted"> -- need {summary.need}</span>
-            )}
-            {summary.ready && (
-              <span className="text-ok"> -- ready to learn</span>
-            )}
-          </span>
-          <div className="flex gap-1">
-            {(["all", "unlabelled"] as Filter[]).map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setFilter(f)}
-                className={`text-xs px-2.5 py-1 rounded-sm border transition-colors ${
-                  filter === f
-                    ? "border-ink text-ink"
-                    : "border-rule text-ink-muted hover:text-ink"
-                }`}
-              >
-                {f === "all" ? "All" : "Unlabelled"}
-              </button>
-            ))}
+    <div className="flex flex-col">
+      <div className="border-b border-hairline px-4 sm:px-6 py-4 space-y-3">
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div>
+            <h1 className="font-display text-2xl text-text leading-tight">{run.goal}</h1>
+            <p className="text-xs text-muted mt-1">
+              {allLeads.length} lead{allLeads.length === 1 ? "" : "s"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href={getReportUrl(run.run_id)}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border border-hairline text-text hover:border-lime/40 transition"
+            >
+              <FileText size={12} /> Report
+            </a>
+            <a
+              href={getCsvUrl(run.run_id)}
+              className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border border-hairline text-text hover:border-lime/40 transition"
+            >
+              <Download size={12} /> CSV
+            </a>
           </div>
         </div>
-      )}
 
-      {toggleError && <p className="text-sm text-fail">{toggleError}</p>}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          {summary && <ProgressMeter summary={summary} />}
+          <FilterTabs value={filter} onChange={setFilter} />
+        </div>
+        <ShortcutLegend />
+      </div>
 
-      <LeadsTable
-        leads={visibleLeads}
-        labels={labels}
-        onToggleLabel={handleToggle}
-      />
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
+        <div className="overflow-x-auto p-4 sm:p-6">
+          <Ledger
+            leads={visibleLeads}
+            labels={labels}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+          />
+        </div>
+        <div className="border-l border-hairline p-4 sm:p-6 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-3.5rem)] lg:overflow-y-auto">
+          {selectedLead ? (
+            <DetailPanel
+              lead={selectedLead}
+              label={labels[selectedLead.id]}
+              pending={pendingId === selectedLead.id}
+              onLabel={(next) => handleToggle(selectedLead.id, next)}
+            />
+          ) : (
+            <p className="text-sm text-muted italic">No lead selected.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

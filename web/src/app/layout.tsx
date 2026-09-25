@@ -1,49 +1,50 @@
 import type { Metadata } from "next";
-import { Fraunces, Inter, JetBrains_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 import { Nav } from "@/components/Nav";
+import { Providers } from "@/components/Providers";
 
-const fraunces = Fraunces({
-  variable: "--font-fraunces",
-  subsets: ["latin"],
-  axes: ["opsz"],
-  display: "swap",
-});
-
-const inter = Inter({
-  variable: "--font-inter",
+const geist = Geist({
+  variable: "--font-geist",
   subsets: ["latin"],
   display: "swap",
 });
 
-const jetbrainsMono = JetBrains_Mono({
-  variable: "--font-jetbrains-mono",
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
   subsets: ["latin"],
-  weight: ["400", "500"],
+  display: "swap",
+});
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
+  subsets: ["latin"],
+  weight: "400",
+  style: ["italic", "normal"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "Prospector",
-  description: "Agentic lead prospecting: plan, act, observe, learn.",
+  description: "Radar for your next customers: plan, act, observe, learn.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${fraunces.variable} ${inter.variable} ${jetbrainsMono.variable} h-full`}
+      className={`motion-ok ${geist.variable} ${geistMono.variable} ${instrumentSerif.variable} h-full`}
     >
-      <body className="min-h-full flex flex-col bg-paper text-ink font-sans antialiased">
-        <Nav />
-        <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-8">
-          {children}
-        </main>
-        <footer className="border-t border-rule">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 text-xs text-ink-muted font-mono">
-            prospector -- plan / act / observe / learn
-          </div>
-        </footer>
+      <body className="min-h-full flex flex-col bg-bg text-text font-sans antialiased">
+        <Providers>
+          <Nav />
+          <main className="flex-1 w-full">{children}</main>
+          <footer className="border-t border-hairline">
+            <div className="max-w-[1440px] mx-auto px-4 sm:px-6 py-4 text-xs text-muted font-mono">
+              prospector -- plan / act / observe / learn
+            </div>
+          </footer>
+        </Providers>
       </body>
     </html>
   );

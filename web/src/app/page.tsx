@@ -1,34 +1,41 @@
 "use client";
 
 import { useState } from "react";
-import { errorMessage, getCsvUrl, getReportUrl, startRun } from "@/lib/api";
+import dynamic from "next/dynamic";
+import { errorMessage, startRun } from "@/lib/api";
 import { useRunPolling } from "@/hooks/useRunPolling";
-import { StatusBar } from "@/components/StatusBar";
-import { StepCard } from "@/components/StepCard";
-import { LeadsTable } from "@/components/LeadsTable";
+import { useApiHealth } from "@/hooks/useApiHealth";
+import { CommandBar } from "@/components/run/CommandBar";
+import { PlanRail } from "@/components/run/PlanRail";
+import { ThoughtStream } from "@/components/run/ThoughtStream";
+import { ResultBanner } from "@/components/run/ResultBanner";
+import { LeadCardGrid } from "@/components/run/LeadCard";
+import { ApiDownState } from "@/components/ErrorState";
+import { MapSkeleton } from "@/components/map/MapSkeleton";
 
-const EXAMPLES: { chip: string; goal: string }[] = [
-  {
-    chip: "20 dental clinics, Pune",
-    goal: "Find 20 dental clinics in Pune that would benefit from an AI phone receptionist",
-  },
-  {
-    chip: "salons, Mumbai",
-    goal: "Find 15 salons in Mumbai that would benefit from an AI phone receptionist",
-  },
-  {
-    chip: "physio clinics, Nashik",
-    goal: "Find 15 physiotherapy clinics in Nashik that would benefit from an AI phone receptionist",
-  },
-];
+const ProspectorMap = dynamic(() => import("@/components/map/ProspectorMap"), {
+  ssr: false,
+  loading: () => <MapSkeleton />,
+});
+
+const SEARCH_ACTIONS = new Set(["geocode", "search_businesses", "widen_area"]);
+
+const STATUS_LABEL: Record<string, string> = {
+  running: "Running",
+  done: "Done",
+  failed: "Failed",
+  max_steps: "Stopped at max steps",
+};
 
 export default function RunPage() {
   const [goal, setGoal] = useState("");
   const [runId, setRunId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
 
   const { run, error: pollError } = useRunPolling(runId);
+  const health = useApiHealth();
 
   const busy = starting || run?.status === "running";
 
@@ -47,137 +54,94 @@ export default function RunPage() {
     }
   }
 
-  const leads = run ? Object.values(run.leads) : [];
+  if (health === "down" && !run) {
+    return <ApiDownState />;
+  }
+
+  if (!run) {
+    return (
+      <CommandBar
+        value={goal}
+        onChange={setGoal}
+        onSubmit={handleRun}
+        busy={busy}
+        error={startError}
+      />
+    );
+  }
+
+  const leads = Object.values(run.leads);
+  const lastStep = run.step_log[run.step_log.length - 1];
+  const sweeping = run.status === "running" && !!lastStep && SEARCH_ACTIONS.has(lastStep.action);
 
   return (
-    <div className="space-y-10">
-      <section className="space-y-4">
-        <h1 className="font-display text-3xl text-ink">New run</h1>
-        <p className="text-ink-muted text-sm max-w-2xl">
-          Describe who you&apos;re looking for. The agent plans, searches
-          OpenStreetMap, enriches each business&apos;s website, scores every
-          lead, and writes a one-line pitch hook for the best ones.
-        </p>
-
-        <textarea
-          value={goal}
-          onChange={(e) => setGoal(e.target.value)}
-          placeholder="Find 30 dental clinics in Pune that would benefit from an AI phone receptionist"
-          rows={3}
-          disabled={busy}
-          className="w-full resize-none border border-rule bg-paper px-4 py-3 text-base font-display placeholder:text-ink-muted/70 focus:outline-none focus:border-ink rounded-sm disabled:opacity-60"
+    <div className="flex flex-col">
+      <div className="border-b border-hairline px-4 sm:px-6 py-3.5 flex items-center gap-3 flex-wrap">
+        <span
+          className={`h-2 w-2 rounded-full shrink-0 ${
+            run.status === "running"
+              ? "bg-amber pulse-dot"
+              : run.status === "done"
+                ? "bg-lime"
+                : "bg-coral"
+          }`}
         />
+        <span className="text-sm font-medium text-text">{STATUS_LABEL[run.status]}</span>
+        <span className="text-sm text-muted truncate">{run.goal}</span>
+        {pollError && <span className="text-sm text-coral ml-auto">{pollError}</span>}
+      </div>
 
-        <div className="flex flex-wrap gap-2">
-          {EXAMPLES.map((ex) => (
-            <button
-              key={ex.chip}
-              type="button"
-              disabled={busy}
-              onClick={() => setGoal(ex.goal)}
-              className="text-xs font-mono px-2.5 py-1 rounded-full border border-rule text-ink-muted hover:text-ink hover:border-ink transition-colors disabled:opacity-50"
-            >
-              {ex.chip}
-            </button>
-          ))}
+      {/* >=1280px: three-panel. Below that: stacked (counters, map, stream). */}
+      <div className="xl:hidden flex flex-col">
+        <div className="p-4 sm:p-6">
+          <PlanRail run={run} />
         </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={busy || !goal.trim()}
-            className="bg-ink text-paper text-sm font-medium px-5 py-2.5 rounded-sm hover:opacity-90 transition-opacity disabled:opacity-40"
-          >
-            {starting ? "Starting..." : run?.status === "running" ? "Running..." : "Run"}
-          </button>
-          {startError && (
-            <span className="text-sm text-fail">{startError}</span>
-          )}
-        </div>
-      </section>
-
-      {run && (
-        <section className="space-y-5 border-t border-rule pt-8">
-          <StatusBar
-            status={run.status}
-            detail={
-              run.status === "running"
-                ? `step ${run.step_log.length}${run.plan.length ? ` of plan (${run.plan.length} items)` : ""}`
-                : `${leads.length} lead${leads.length === 1 ? "" : "s"} found`
-            }
+        <div className="h-[360px] border-y border-hairline">
+          <ProspectorMap
+            leads={leads}
+            labels={run.labels}
+            bbox={run.bbox}
+            selectedId={selectedLeadId}
+            onSelect={setSelectedLeadId}
+            sweeping={sweeping}
           />
-          {pollError && (
-            <p className="text-sm text-fail">{pollError}</p>
+        </div>
+        <div className="p-4 sm:p-6">
+          <ThoughtStream steps={run.step_log} running={run.status === "running"} />
+        </div>
+      </div>
+
+      <div className="hidden xl:grid xl:grid-cols-[280px_1fr_400px] xl:h-[calc(100vh-7.75rem)]">
+        <div className="border-r border-hairline overflow-y-auto p-5">
+          <PlanRail run={run} />
+        </div>
+        <div className="relative">
+          <ProspectorMap
+            leads={leads}
+            labels={run.labels}
+            bbox={run.bbox}
+            selectedId={selectedLeadId}
+            onSelect={setSelectedLeadId}
+            sweeping={sweeping}
+          />
+        </div>
+        <div className="border-l border-hairline overflow-y-auto p-5">
+          <ThoughtStream steps={run.step_log} running={run.status === "running"} />
+        </div>
+      </div>
+
+      {run.status !== "running" && (
+        <div className="p-4 sm:p-6 space-y-6 border-t border-hairline">
+          <ResultBanner run={run} />
+          {run.notes.length > 0 && (
+            <ul className="text-sm text-muted space-y-1 list-disc list-inside">
+              {run.notes.map((note, i) => (
+                <li key={i}>{note}</li>
+              ))}
+            </ul>
           )}
-
-          {run.plan.length > 0 && (
-            <div className="border border-rule rounded-sm px-4 py-3">
-              <h2 className="text-xs uppercase tracking-wide text-ink-muted mb-2">
-                Plan
-              </h2>
-              <ol className="list-decimal list-inside space-y-1 text-sm text-ink">
-                {run.plan.map((item, i) => (
-                  <li key={i}>{item}</li>
-                ))}
-              </ol>
-            </div>
-          )}
-
-          <div className="space-y-2.5">
-            {run.step_log.map((step) => (
-              <StepCard key={step.n} step={step} />
-            ))}
-            {run.step_log.length === 0 && run.status === "running" && (
-              <p className="text-sm text-ink-muted italic">
-                Planning...
-              </p>
-            )}
-          </div>
-
-          {run.status !== "running" && (
-            <div className="space-y-6 border-t border-rule pt-6">
-              {run.final_answer && (
-                <p className="text-base font-display text-ink">
-                  {run.final_answer}
-                </p>
-              )}
-
-              {run.notes.length > 0 && (
-                <ul className="text-sm text-ink-muted space-y-1 list-disc list-inside">
-                  {run.notes.map((note, i) => (
-                    <li key={i}>{note}</li>
-                  ))}
-                </ul>
-              )}
-
-              <div className="flex items-center gap-3">
-                <a
-                  href={getReportUrl(run.run_id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm px-3 py-1.5 border border-rule rounded-sm text-ink hover:border-ink transition-colors"
-                >
-                  View report
-                </a>
-                <a
-                  href={getCsvUrl(run.run_id)}
-                  className="text-sm px-3 py-1.5 border border-rule rounded-sm text-ink hover:border-ink transition-colors"
-                >
-                  Download CSV
-                </a>
-                <a
-                  href={`/runs/${run.run_id}`}
-                  className="text-sm px-3 py-1.5 border border-rule rounded-sm text-ink hover:border-ink transition-colors"
-                >
-                  Review &amp; label
-                </a>
-              </div>
-
-              <LeadsTable leads={leads} />
-            </div>
-          )}
-        </section>
+          <LeadCardGrid leads={leads} />
+        </div>
       )}
     </div>
   );

@@ -1,31 +1,48 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { errorMessage, listRuns } from "@/lib/api";
+import { errorMessage, getRun, listRuns } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
+import { RunCard, type RunCardData } from "@/components/runs/RunCard";
+import { ApiDownState } from "@/components/ErrorState";
 
-const STATUS_TEXT_CLASS: Record<RunSummary["status"], string> = {
-  running: "text-running",
-  done: "text-ok",
-  failed: "text-fail",
-  max_steps: "text-running",
-};
-
-function formatDate(startedAt: number): string {
-  if (!startedAt) return "--";
-  return new Date(startedAt * 1000).toLocaleString();
+async function enrich(summary: RunSummary): Promise<RunCardData> {
+  try {
+    const full = await getRun(summary.run_id);
+    return {
+      run_id: summary.run_id,
+      goal: summary.goal,
+      place: full.place,
+      status: summary.status,
+      n_leads: summary.n_leads,
+      started_at: summary.started_at,
+      scores: Object.values(full.leads).map((l) => l.score),
+    };
+  } catch {
+    // A run whose state.json can't be read for some reason still shows up
+    // with the list-endpoint fields, just without a place/histogram.
+    return {
+      run_id: summary.run_id,
+      goal: summary.goal,
+      place: "",
+      status: summary.status,
+      n_leads: summary.n_leads,
+      started_at: summary.started_at,
+      scores: [],
+    };
+  }
 }
 
 export default function RunsPage() {
-  const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [runs, setRuns] = useState<RunCardData[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     listRuns()
-      .then((data) => {
-        if (!cancelled) setRuns(data);
+      .then(async (summaries) => {
+        const detailed = await Promise.all(summaries.map(enrich));
+        if (!cancelled) setRuns(detailed);
       })
       .catch((err) => {
         if (!cancelled) setError(errorMessage(err));
@@ -35,59 +52,26 @@ export default function RunsPage() {
     };
   }, []);
 
+  if (error) return <ApiDownState />;
+
   return (
-    <div className="space-y-6">
-      <h1 className="font-display text-3xl text-ink">Runs</h1>
+    <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-8 space-y-6">
+      <h1 className="font-display text-3xl text-text">Runs</h1>
 
-      {error && <p className="text-sm text-fail">{error}</p>}
-
-      {!runs && !error && (
-        <p className="text-sm text-ink-muted italic">Loading...</p>
-      )}
+      {!runs && <p className="text-sm text-muted italic">Loading...</p>}
 
       {runs && runs.length === 0 && (
-        <p className="text-sm text-ink-muted italic">
+        <p className="text-sm text-muted italic">
           No runs yet. Start one from the Run page.
         </p>
       )}
 
       {runs && runs.length > 0 && (
-        <table className="w-full text-sm border-collapse">
-          <thead>
-            <tr className="border-b border-rule text-left text-ink-muted text-xs uppercase tracking-wide">
-              <th className="py-2 pr-3 font-medium">Started</th>
-              <th className="py-2 pr-3 font-medium">Goal</th>
-              <th className="py-2 pr-3 font-medium">Status</th>
-              <th className="py-2 pr-3 font-medium">Leads</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr
-                key={run.run_id}
-                className="border-b border-rule hover:bg-paper-raised/60 transition-colors"
-              >
-                <td className="py-2.5 pr-3 font-mono text-xs text-ink-muted whitespace-nowrap">
-                  {formatDate(run.started_at)}
-                </td>
-                <td className="py-2.5 pr-3 max-w-md">
-                  <Link
-                    href={`/runs/${run.run_id}`}
-                    className="text-ink underline decoration-rule underline-offset-2 hover:decoration-ink"
-                  >
-                    {run.goal}
-                  </Link>
-                </td>
-                <td
-                  className={`py-2.5 pr-3 font-medium ${STATUS_TEXT_CLASS[run.status]}`}
-                >
-                  {run.status}
-                </td>
-                <td className="py-2.5 pr-3 font-mono">{run.n_leads}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="run-list">
+          {runs.map((run) => (
+            <RunCard key={run.run_id} run={run} />
+          ))}
+        </div>
       )}
     </div>
   );
