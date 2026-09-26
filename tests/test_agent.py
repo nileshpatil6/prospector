@@ -337,3 +337,63 @@ def test_deep_research_errors_with_ok_false_when_no_leads_at_all(tmp_path):
     observation = agent._tool_deep_research(state, {"lead_ids": ["nope"]})
 
     assert observation.startswith("error:")
+
+
+# --- prepare_receptionists tool --------------------------------------------
+
+
+def test_prepare_receptionists_writes_prompts_for_top_scored_leads(tmp_path):
+    memory = Memory(tmp_path / "data")
+    low = _fake_lead(1); low.score = 10.0
+    high = _fake_lead(2); high.score = 90.0
+    responses = [
+        {"prompts": {
+            high.id: f"You are the AI receptionist of {high.name}. Custom persona.",
+            low.id: f"You are the AI receptionist of {low.name}. Custom persona.",
+        }}
+    ]
+    agent = Agent(ScriptedLLM(responses), memory, runs_dir=tmp_path / "runs")
+
+    from prospector.agent import RunState
+    state = RunState(run_id="r1", goal="test")
+    state.leads[low.id] = low
+    state.leads[high.id] = high
+
+    observation = agent._tool_prepare_receptionists(state, {})  # no lead_ids -> top scored
+
+    assert not observation.startswith("error:")
+    assert high.receptionist_prompt == f"You are the AI receptionist of {high.name}. Custom persona."
+    assert low.receptionist_prompt == f"You are the AI receptionist of {low.name}. Custom persona."
+
+
+def test_prepare_receptionists_caps_at_three_leads(tmp_path):
+    memory = Memory(tmp_path / "data")
+    agent = Agent(ScriptedLLM([{"prompts": {}}]), memory, runs_dir=tmp_path / "runs")
+
+    from prospector.agent import RunState
+    state = RunState(run_id="r1", goal="test")
+    for i in range(1, 6):
+        lead = _fake_lead(i)
+        lead.score = float(i)
+        state.leads[lead.id] = lead
+
+    observation = agent._tool_prepare_receptionists(state, {"lead_ids": [f"osm:node/{i}" for i in range(1, 6)]})
+
+    assert observation.startswith("error:")  # scripted response wrote 0 prompts
+    _method, _system, user = agent.llm.calls[0]
+    assert "osm:node/1" in user and "osm:node/2" in user and "osm:node/3" in user
+    assert "osm:node/4" not in user and "osm:node/5" not in user
+
+
+def test_prepare_receptionists_error_when_llm_fails(tmp_path):
+    memory = Memory(tmp_path / "data")
+    agent = Agent(ScriptedLLM([]), memory, runs_dir=tmp_path / "runs")  # no queued response -> LLMError
+
+    from prospector.agent import RunState
+    state = RunState(run_id="r1", goal="test")
+    state.leads["osm:node/1"] = _fake_lead(1)
+
+    observation = agent._tool_prepare_receptionists(state, {})
+
+    assert observation.startswith("error:")
+    assert state.leads["osm:node/1"].receptionist_prompt == ""

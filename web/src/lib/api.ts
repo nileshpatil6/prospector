@@ -2,9 +2,11 @@ import type {
   Label,
   LabelsSummary,
   LearnReport,
+  LiveSessionResponse,
   MemoryResponse,
   RunState,
   RunSummary,
+  TakenMessageRecord,
 } from "./types";
 
 export const API_BASE =
@@ -100,6 +102,25 @@ export function runLearn(): Promise<LearnReport> {
 
 export function getMemory(): Promise<MemoryResponse> {
   return request("/api/memory");
+}
+
+/** lead_id contains a literal "/" -- see deleteLabel's note above; the same
+ * path-converter route shape is used for both of these. */
+export function createLiveSession(runId: string, leadId: string): Promise<LiveSessionResponse> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/leads/${leadId}/live-session`, {
+    method: "POST",
+  });
+}
+
+export function postMessage(
+  runId: string,
+  leadId: string,
+  message: { caller_name: string; callback_number: string; reason: string }
+): Promise<TakenMessageRecord> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/leads/${leadId}/messages`, {
+    method: "POST",
+    body: JSON.stringify(message),
+  });
 }
 
 export function errorMessage(err: unknown): string {

@@ -73,6 +73,23 @@ def test_bbox_widened_grows_around_center():
     assert wide.west == 5.0 and wide.east == 25.0
 
 
+def test_lead_from_dict_loads_old_state_missing_receptionist_fields():
+    # A state.json written before receptionist_prompt/messages existed must
+    # still load, defaulting the new fields instead of raising a TypeError.
+    old_dict = {
+        "id": "osm:node/1", "name": "Old Clinic", "niche": "dentist",
+        "lat": 18.5, "lon": 73.8, "address": "", "phone": "", "website": "",
+        "opening_hours": "", "source_url": "", "emails": [], "has_booking": None,
+        "chat_widget": "", "has_contact_form": None, "site_ok": None,
+        "fetch_error": "", "research": {}, "score": 0.0, "reasons": [], "hook": "",
+    }
+    lead = osm.Lead.from_dict(old_dict)
+    assert lead.receptionist_prompt == ""
+    assert lead.messages == []
+    assert lead.to_dict()["receptionist_prompt"] == ""
+    assert lead.to_dict()["messages"] == []
+
+
 # --- MED: Overpass 429/504 moves to the next mirror immediately (no sleep) -
 
 def test_query_overpass_fast_fails_on_429_without_sleeping(monkeypatch):

@@ -5,6 +5,7 @@ import { Check, X } from "lucide-react";
 import type { Label, Lead } from "@/lib/types";
 import { parseReason, websiteHost } from "@/lib/format";
 import { MapSkeleton } from "@/components/map/MapSkeleton";
+import { CallReceptionistButton } from "@/components/call/CallReceptionistButton";
 
 const ProspectorMap = dynamic(() => import("@/components/map/ProspectorMap"), {
   ssr: false,
@@ -70,13 +71,14 @@ function ScoreBreakdown({ reasons }: { reasons: string[] }) {
 }
 
 interface DetailPanelProps {
+  runId: string;
   lead: Lead;
   label: Label | undefined;
   onLabel: (label: Label | null) => void;
   pending: boolean;
 }
 
-export function DetailPanel({ lead, label, onLabel, pending }: DetailPanelProps) {
+export function DetailPanel({ runId, lead, label, onLabel, pending }: DetailPanelProps) {
   return (
     <div className="space-y-5" data-testid="detail-panel">
       <div>
@@ -87,6 +89,8 @@ export function DetailPanel({ lead, label, onLabel, pending }: DetailPanelProps)
       <div className="h-40 rounded-lg overflow-hidden border border-hairline">
         <ProspectorMap leads={[lead]} bbox={null} labels={label ? { [lead.id]: label } : undefined} />
       </div>
+
+      <CallReceptionistButton runId={runId} lead={lead} className="w-full" />
 
       <div className="flex gap-2">
         <button

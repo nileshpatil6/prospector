@@ -39,6 +39,21 @@ export interface Lead {
   score: number;
   reasons: string[];
   hook: string;
+  receptionist_prompt: string;
+  messages: TakenMessageRecord[];
+}
+
+export interface TakenMessageRecord {
+  caller_name: string;
+  callback_number: string;
+  reason: string;
+  ts: number;
+}
+
+export interface LiveSessionResponse {
+  token: string;
+  model: string;
+  config: Record<string, unknown>;
 }
 
 export interface RunState {

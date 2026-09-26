@@ -20,6 +20,7 @@ from prospector import web
 from prospector.llm import LLM, LLMError
 from prospector.memory import Memory
 from prospector.osm import BBox, Lead, NICHES, OSMError, geocode, search
+from prospector.receptionist import MAX_RECEPTIONISTS
 from prospector.rules import score as score_lead
 
 TRUNCATE_LEN = 1500
@@ -174,6 +175,11 @@ class Agent:
                 {"lead_ids": f"list[str], optional (defaults to the top {MAX_WRITE_HOOKS} scored leads)"},
                 "LLM writes a one-line pitch hook per lead, from observed facts only.",
             ),
+            "prepare_receptionists": (
+                self._tool_prepare_receptionists,
+                {"lead_ids": f"list[str], max {MAX_RECEPTIONISTS} (defaults to the top {MAX_RECEPTIONISTS} scored leads)"},
+                "Use after write_hooks to set up live demo AI receptionists for the top 3 leads.",
+            ),
             "finish": (
                 self._tool_finish,
                 {"summary": "string"},
@@ -297,6 +303,46 @@ class Agent:
         if written == 0:
             return "error: write_hooks ran but wrote 0 hooks"
         return f"wrote {written} hook(s)"
+
+    def _tool_prepare_receptionists(self, state: RunState, args: dict) -> str:
+        lead_ids = self._select_lead_ids(state, args, MAX_RECEPTIONISTS)
+        leads = [state.leads[lid] for lid in lead_ids if lid in state.leads]
+        if not leads:
+            return "error: no leads available to prepare receptionists for"
+
+        facts_block = "\n".join(
+            f"- {ld.id}: name={ld.name!r} niche={ld.niche!r} address={ld.address!r} "
+            f"opening_hours={ld.opening_hours!r}"
+            for ld in leads
+        )
+        system = (
+            "You write the persona system instruction for the AI receptionist of a "
+            "small business, one per lead. Use ONLY the facts given below -- never "
+            "invent a doctor/staff name, price, service, or phone number that isn't "
+            "given. If a caller asks something you have no fact for, say a staff "
+            "member will call back and offer to take a message. Open the call with a "
+            "warm greeting that says this is a demo AI receptionist for the business. "
+            "Speak in Indian English with short, natural replies; if the caller "
+            "speaks Hindi or Marathi, reply in that language instead."
+        )
+        user = f"Leads:\n{facts_block}\n\nWrite one persona system instruction per lead id."
+        schema_hint = '{"prompts": {"<lead_id>": "<full persona system instruction text>"}}'
+        try:
+            response = self.llm.json(system, user, schema_hint)
+        except LLMError as exc:
+            return f"error: receptionist prompt generation failed: {exc}"
+
+        prompts = response.get("prompts", {}) if isinstance(response, dict) else {}
+        if not isinstance(prompts, dict):
+            prompts = {}
+        written = 0
+        for lid, prompt in prompts.items():
+            if lid in state.leads and isinstance(prompt, str) and prompt.strip():
+                state.leads[lid].receptionist_prompt = prompt
+                written += 1
+        if written == 0:
+            return "error: prepare_receptionists ran but wrote 0 prompts"
+        return f"prepared {written} receptionist(s)"
 
     def _tool_finish(self, state: RunState, args: dict) -> str:
         state.final_answer = str(args.get("summary", ""))

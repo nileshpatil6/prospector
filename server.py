@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from prospector.agent import Agent
 from prospector.learner import MIN_LABELS, learn
+from prospector.live import LiveSessionError, create_live_session
 from prospector.llm import LLM, GeminiLLM, LLMError
 from prospector.memory import Memory
 from prospector.osm import Lead
@@ -81,6 +82,19 @@ def _describe_need(total: int, good: int, bad: int) -> str:
     return ""
 
 
+def _load_run_and_lead(runs_dir: Path, run_id: str, lead_id: str) -> tuple[dict, dict]:
+    """Load a run's state.json and pick out one lead's raw dict, or raise the
+    404 both /live-session and /messages need on an unknown run/lead."""
+    state_path = runs_dir / run_id / "state.json"
+    if not state_path.exists():
+        raise HTTPException(404, f"run {run_id!r} not found")
+    data = _read_json_retrying(state_path)
+    lead_data = data.get("leads", {}).get(lead_id)
+    if lead_data is None:
+        raise HTTPException(404, f"lead {lead_id!r} not found in run {run_id!r}")
+    return data, lead_data
+
+
 class RunRequest(BaseModel):
     goal: str
     max_steps: int | None = None
@@ -90,6 +104,15 @@ class LabelRequest(BaseModel):
     run_id: str
     lead_id: str
     label: str
+
+
+class MessageRequest(BaseModel):
+    caller_name: str
+    callback_number: str
+    reason: str
+
+
+MAX_MESSAGE_FIELD_LEN = 200
 
 
 def create_app(
@@ -252,6 +275,36 @@ def create_app(
             "ready": ready,
             "need": "" if ready else _describe_need(total, good, bad),
         }
+
+    # -- Live receptionist ---------------------------------------------------
+
+    @app.post("/api/runs/{run_id}/leads/{lead_id:path}/live-session")
+    def create_live_session_route(run_id: str, lead_id: str) -> dict:
+        _data, lead_data = _load_run_and_lead(app.state.runs_dir, run_id, lead_id)
+        lead = Lead.from_dict(lead_data)
+        try:
+            return create_live_session(lead)
+        except LiveSessionError as exc:
+            raise HTTPException(400, str(exc))
+
+    @app.post("/api/runs/{run_id}/leads/{lead_id:path}/messages")
+    def create_message_route(run_id: str, lead_id: str, req: MessageRequest) -> dict:
+        for field_name in ("caller_name", "callback_number", "reason"):
+            if len(getattr(req, field_name)) > MAX_MESSAGE_FIELD_LEN:
+                raise HTTPException(400, f"{field_name} must be at most {MAX_MESSAGE_FIELD_LEN} chars")
+
+        state_path = app.state.runs_dir / run_id / "state.json"
+        data, lead_data = _load_run_and_lead(app.state.runs_dir, run_id, lead_id)
+        message = {
+            "caller_name": req.caller_name,
+            "callback_number": req.callback_number,
+            "reason": req.reason,
+            "ts": time.time(),
+        }
+        lead_data.setdefault("messages", []).append(message)
+        data["leads"][lead_id] = lead_data
+        state_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return message
 
     # -- Learning -------------------------------------------------------------
 

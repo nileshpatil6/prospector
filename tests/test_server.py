@@ -11,6 +11,8 @@ import time
 
 from fastapi.testclient import TestClient
 
+import server as server_mod
+from prospector.live import LiveSessionError
 from prospector.llm import LLMError, ScriptedLLM
 from prospector.osm import Lead
 from server import create_app
@@ -205,3 +207,92 @@ def test_memory_endpoint(tmp_path):
     resp = client.get("/api/memory")
     assert resp.status_code == 200
     assert resp.json() == {"rules": [], "history": []}
+
+
+def _seed_run(runs_dir, run_id: str, lead: Lead) -> None:
+    run_dir = runs_dir / run_id
+    run_dir.mkdir(parents=True)
+    state = {
+        "run_id": run_id, "goal": "test goal", "plan": [], "step_log": [],
+        "leads": {lead.id: lead.to_dict()}, "notes": [], "status": "done", "final_answer": "",
+        "place": "", "bbox": None, "niches": [], "target_count": 0,
+    }
+    (run_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+
+# --- Live receptionist ------------------------------------------------------
+
+
+def test_live_session_400_without_key(tmp_path, monkeypatch):
+    app = create_app(runs_dir=tmp_path / "runs", data_dir=tmp_path / "data", llm_factory=lambda: ScriptedLLM([]))
+    client = TestClient(app)
+    lead = Lead(id="osm:node/1", name="Clinic 1", niche="dentist", lat=1.0, lon=1.0)
+    _seed_run(tmp_path / "runs", "run_test1", lead)
+
+    def _raise(lead, **kwargs):
+        raise LiveSessionError("GEMINI_API_KEY is not set. Copy .env.example to .env and fill it in.")
+
+    monkeypatch.setattr(server_mod, "create_live_session", _raise)
+
+    resp = client.post(f"/api/runs/run_test1/leads/{lead.id}/live-session")
+    assert resp.status_code == 400
+    assert "GEMINI_API_KEY" in resp.json()["error"]
+
+
+def test_live_session_returns_token_model_config(tmp_path, monkeypatch):
+    app = create_app(runs_dir=tmp_path / "runs", data_dir=tmp_path / "data", llm_factory=lambda: ScriptedLLM([]))
+    client = TestClient(app)
+    lead = Lead(id="osm:node/1", name="Clinic 1", niche="dentist", lat=1.0, lon=1.0)
+    _seed_run(tmp_path / "runs", "run_test1", lead)
+
+    fake_session = {"token": "fake-token", "model": "gemini-3.8-live", "config": {"a": 1}}
+    monkeypatch.setattr(server_mod, "create_live_session", lambda lead, **kwargs: fake_session)
+
+    resp = client.post(f"/api/runs/run_test1/leads/{lead.id}/live-session")
+    assert resp.status_code == 200
+    assert resp.json() == fake_session
+
+
+def test_live_session_404_unknown_run_or_lead(tmp_path, monkeypatch):
+    app = create_app(runs_dir=tmp_path / "runs", data_dir=tmp_path / "data", llm_factory=lambda: ScriptedLLM([]))
+    client = TestClient(app)
+    lead = Lead(id="osm:node/1", name="Clinic 1", niche="dentist", lat=1.0, lon=1.0)
+    _seed_run(tmp_path / "runs", "run_test1", lead)
+    monkeypatch.setattr(server_mod, "create_live_session", lambda lead, **kwargs: {})
+
+    assert client.post("/api/runs/nope/leads/osm:node/1/live-session").status_code == 404
+    assert client.post("/api/runs/run_test1/leads/osm:node/999/live-session").status_code == 404
+
+
+def test_messages_endpoint_persists_and_validates(tmp_path):
+    app = create_app(runs_dir=tmp_path / "runs", data_dir=tmp_path / "data", llm_factory=lambda: ScriptedLLM([]))
+    client = TestClient(app)
+    lead = Lead(id="osm:node/1", name="Clinic 1", niche="dentist", lat=1.0, lon=1.0)
+    _seed_run(tmp_path / "runs", "run_test1", lead)
+
+    resp = client.post(
+        f"/api/runs/run_test1/leads/{lead.id}/messages",
+        json={"caller_name": "Rohan", "callback_number": "+91 98220 11111", "reason": "wants a callback"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["caller_name"] == "Rohan"
+    assert "ts" in body
+
+    # persisted into state.json / reflected in the run endpoint.
+    run_data = client.get("/api/runs/run_test1").json()
+    assert run_data["leads"][lead.id]["messages"] == [body]
+
+    # field-length validation.
+    too_long = "x" * 201
+    bad_resp = client.post(
+        f"/api/runs/run_test1/leads/{lead.id}/messages",
+        json={"caller_name": too_long, "callback_number": "123", "reason": "hi"},
+    )
+    assert bad_resp.status_code == 400
+
+    # unknown run/lead is 404.
+    assert client.post(
+        "/api/runs/nope/leads/osm:node/1/messages",
+        json={"caller_name": "a", "callback_number": "b", "reason": "c"},
+    ).status_code == 404

@@ -140,7 +140,7 @@ export default function RunPage() {
               ))}
             </ul>
           )}
-          <LeadCardGrid leads={leads} />
+          <LeadCardGrid leads={leads} runId={run.run_id} />
         </div>
       )}
     </div>

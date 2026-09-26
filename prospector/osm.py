@@ -108,6 +108,10 @@ class Lead:
     reasons: list[str] = field(default_factory=list)
     hook: str = ""
 
+    # AI receptionist demo (live.py)
+    receptionist_prompt: str = ""
+    messages: list[dict] = field(default_factory=list)
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -130,6 +134,8 @@ class Lead:
             "score": self.score,
             "reasons": list(self.reasons),
             "hook": self.hook,
+            "receptionist_prompt": self.receptionist_prompt,
+            "messages": [dict(m) for m in self.messages],
         }
 
     @classmethod

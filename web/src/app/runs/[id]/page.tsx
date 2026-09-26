@@ -196,6 +196,7 @@ export default function ReviewPage() {
         <div className="border-l border-hairline p-4 sm:p-6 lg:sticky lg:top-14 lg:self-start lg:max-h-[calc(100vh-3.5rem)] lg:overflow-y-auto">
           {selectedLead ? (
             <DetailPanel
+              runId={run.run_id}
               lead={selectedLead}
               label={labels[selectedLead.id]}
               pending={pendingId === selectedLead.id}

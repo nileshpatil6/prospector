@@ -4,8 +4,9 @@ import { motion } from "motion/react";
 import type { Lead } from "@/lib/types";
 import { ScoreRing } from "@/components/ScoreRing";
 import { websiteHost } from "@/lib/format";
+import { CallReceptionistButton } from "@/components/call/CallReceptionistButton";
 
-export function LeadCardGrid({ leads }: { leads: Lead[] }) {
+export function LeadCardGrid({ leads, runId }: { leads: Lead[]; runId: string }) {
   const top = [...leads].sort((a, b) => b.score - a.score).slice(0, 5);
   if (top.length === 0) return null;
 
@@ -53,6 +54,8 @@ export function LeadCardGrid({ leads }: { leads: Lead[] }) {
                 &ldquo;{lead.hook}&rdquo;
               </blockquote>
             )}
+
+            <CallReceptionistButton runId={runId} lead={lead} className="mt-1 self-start" />
           </motion.div>
         ))}
       </div>
