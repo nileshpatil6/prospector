@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import tempfile
+import time
 from pathlib import Path
 
 import prospector.agent as agent_mod
@@ -262,6 +263,11 @@ class RoutingScriptedLLM:
         if "planning module" in system:
             return self._pop(self._plan_queue, "plan")
         if "acting module" in system:
+            # A small, deliberate delay per loop step -- a real Gemini call
+            # takes long enough that the frontend's 1s poll can catch a
+            # genuinely "running" frame (e.g. for the 01-run spec's
+            # mid-run screenshot); an instant scripted response never would.
+            time.sleep(0.5)
             return self._pop(self._loop_queue, "loop")
         if "write a single-sentence" in system:
             return self._pop(self._hooks_queue, "hooks")
