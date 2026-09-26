@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { errorMessage, startRun } from "@/lib/api";
 import { useRunPolling } from "@/hooks/useRunPolling";
 import { useApiHealth } from "@/hooks/useApiHealth";
+import { useIsDesktop } from "@/hooks/useIsDesktop";
 import { CommandBar } from "@/components/run/CommandBar";
 import { PlanRail } from "@/components/run/PlanRail";
 import { ThoughtStream } from "@/components/run/ThoughtStream";
@@ -36,6 +37,7 @@ export default function RunPage() {
 
   const { run, error: pollError } = useRunPolling(runId);
   const health = useApiHealth();
+  const isDesktop = useIsDesktop();
 
   const busy = starting || run?.status === "running";
 
@@ -91,44 +93,49 @@ export default function RunPage() {
         {pollError && <span className="text-sm text-coral ml-auto">{pollError}</span>}
       </div>
 
-      {/* >=1280px: three-panel. Below that: stacked (counters, map, stream). */}
-      <div className="xl:hidden flex flex-col">
-        <div className="p-4 sm:p-6">
-          <PlanRail run={run} />
+      {/* >=1280px (xl): three-panel. Below that: stacked (counters, map,
+          stream). Rendered as ONE tree picked by actual viewport width,
+          not two DOM trees toggled by responsive classes -- mounting both
+          would double every data-testid (and every Leaflet map) inside them. */}
+      {isDesktop ? (
+        <div className="grid grid-cols-[280px_1fr_400px] h-[calc(100vh-7.75rem)]">
+          <div className="border-r border-hairline overflow-y-auto p-5">
+            <PlanRail run={run} />
+          </div>
+          <div className="relative">
+            <ProspectorMap
+              leads={leads}
+              labels={run.labels}
+              bbox={run.bbox}
+              selectedId={selectedLeadId}
+              onSelect={setSelectedLeadId}
+              sweeping={sweeping}
+            />
+          </div>
+          <div className="border-l border-hairline overflow-y-auto p-5">
+            <ThoughtStream steps={run.step_log} running={run.status === "running"} />
+          </div>
         </div>
-        <div className="h-[360px] border-y border-hairline">
-          <ProspectorMap
-            leads={leads}
-            labels={run.labels}
-            bbox={run.bbox}
-            selectedId={selectedLeadId}
-            onSelect={setSelectedLeadId}
-            sweeping={sweeping}
-          />
+      ) : (
+        <div className="flex flex-col">
+          <div className="p-4 sm:p-6">
+            <PlanRail run={run} />
+          </div>
+          <div className="h-[360px] border-y border-hairline">
+            <ProspectorMap
+              leads={leads}
+              labels={run.labels}
+              bbox={run.bbox}
+              selectedId={selectedLeadId}
+              onSelect={setSelectedLeadId}
+              sweeping={sweeping}
+            />
+          </div>
+          <div className="p-4 sm:p-6">
+            <ThoughtStream steps={run.step_log} running={run.status === "running"} />
+          </div>
         </div>
-        <div className="p-4 sm:p-6">
-          <ThoughtStream steps={run.step_log} running={run.status === "running"} />
-        </div>
-      </div>
-
-      <div className="hidden xl:grid xl:grid-cols-[280px_1fr_400px] xl:h-[calc(100vh-7.75rem)]">
-        <div className="border-r border-hairline overflow-y-auto p-5">
-          <PlanRail run={run} />
-        </div>
-        <div className="relative">
-          <ProspectorMap
-            leads={leads}
-            labels={run.labels}
-            bbox={run.bbox}
-            selectedId={selectedLeadId}
-            onSelect={setSelectedLeadId}
-            sweeping={sweeping}
-          />
-        </div>
-        <div className="border-l border-hairline overflow-y-auto p-5">
-          <ThoughtStream steps={run.step_log} running={run.status === "running"} />
-        </div>
-      </div>
+      )}
 
       {run.status !== "running" && (
         <div className="p-4 sm:p-6 space-y-6 border-t border-hairline">

@@ -26,16 +26,10 @@ interface CallPanelProps {
 }
 
 export function CallPanel({ runId, lead, onClose }: CallPanelProps) {
+  // useLiveCall starts the call itself on mount (and tears it down on
+  // unmount) -- see the paired effect at the bottom of the hook.
   const call = useLiveCall(runId, lead);
-  const startedRef = useRef(false);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    call.start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ block: "nearest" });

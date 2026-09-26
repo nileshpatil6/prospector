@@ -5,7 +5,7 @@
  * would, so useLiveCall doesn't need to know which one it's talking to. */
 import type { LiveCallbacks, LiveSessionLike } from "./types";
 
-export function createFakeLiveSession(callbacks: LiveCallbacks): LiveSessionLike {
+export function createFakeLiveSession(callbacks: LiveCallbacks, businessName: string): LiveSessionLike {
   let closed = false;
   const timers: ReturnType<typeof setTimeout>[] = [];
   const schedule = (fn: () => void, ms: number) => {
@@ -20,7 +20,7 @@ export function createFakeLiveSession(callbacks: LiveCallbacks): LiveSessionLike
   schedule(
     () =>
       callbacks.onmessage({
-        serverContent: { inputTranscription: { text: "Hi, is this Sunrise Dental Care?" }, turnComplete: true },
+        serverContent: { inputTranscription: { text: `Hi, is this ${businessName}?` }, turnComplete: true },
       }),
     300
   );
@@ -29,7 +29,7 @@ export function createFakeLiveSession(callbacks: LiveCallbacks): LiveSessionLike
       callbacks.onmessage({
         serverContent: {
           outputTranscription: {
-            text: "Hello! This is a demo AI receptionist for Sunrise Dental Care. How can I help?",
+            text: `Hello! This is a demo AI receptionist for ${businessName}. How can I help?`,
           },
           turnComplete: true,
         },

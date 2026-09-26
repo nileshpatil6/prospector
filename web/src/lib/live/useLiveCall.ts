@@ -76,7 +76,15 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
   const startedAtRef = useRef(0);
   const timerIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const rafIdRef = useRef<number | null>(null);
-  const torndownRef = useRef(false);
+
+  // React 18 StrictMode (dev only, via `next dev`) mounts every component
+  // twice: mount -> effect cleanup -> mount again. Without this, the first
+  // start() call's in-flight `await`s would resume after the "fake" cleanup
+  // and stomp over the second call's fresh session. Every start() claims a
+  // generation number; teardown() bumps it, so a stale start() can tell
+  // it's been superseded at its next await and quietly back off instead of
+  // touching state a newer call already owns.
+  const generationRef = useRef(0);
 
   const stopScheduledPlayback = useCallback(() => {
     for (const source of scheduledSourcesRef.current) {
@@ -91,8 +99,7 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
   }, []);
 
   const teardown = useCallback(() => {
-    if (torndownRef.current) return;
-    torndownRef.current = true;
+    generationRef.current += 1;
 
     if (timerIdRef.current) clearInterval(timerIdRef.current);
     if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
@@ -109,8 +116,6 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
 
     sessionRef.current = null;
   }, [stopScheduledPlayback]);
-
-  useEffect(() => teardown, [teardown]);
 
   const appendTranscript = useCallback((speaker: "caller" | "receptionist", text: string) => {
     setTranscript((lines) => {
@@ -216,8 +221,9 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
   }, []);
 
   const start = useCallback(() => {
-    if (status === "connecting" || status === "active") return;
-    torndownRef.current = false;
+    const myGeneration = ++generationRef.current; // claims this attempt AND invalidates any earlier one
+    const isCurrent = () => generationRef.current === myGeneration;
+
     setStatus("connecting");
     setErrorKind(null);
     setErrorText("");
@@ -239,12 +245,14 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
           model = session.model;
           config = session.config;
         } catch (err) {
+          if (!isCurrent()) return;
           setStatus("error");
           setErrorKind("token_error");
           setErrorText(errorMessage(err));
           return;
         }
       }
+      if (!isCurrent()) return;
 
       let stream: MediaStream;
       try {
@@ -252,80 +260,120 @@ export function useLiveCall(runId: string, lead: Lead): UseLiveCallResult {
           audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
       } catch {
+        if (!isCurrent()) return;
         setStatus("error");
         setErrorKind("mic_denied");
         setErrorText("Microphone access was denied. Allow mic access and try again.");
         return;
       }
-      if (torndownRef.current) {
+      if (!isCurrent()) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
+
+      let micContext: AudioContext;
+      let micAnalyser: AnalyserNode;
+      let workletNode: AudioWorkletNode;
+      let playbackContext: AudioContext;
+      let outputAnalyser: AnalyserNode;
+      try {
+        micContext = new AudioContext();
+        const micSource = micContext.createMediaStreamSource(stream);
+        micAnalyser = micContext.createAnalyser();
+        micAnalyser.fftSize = 512;
+        micSource.connect(micAnalyser);
+
+        await micContext.audioWorklet.addModule(micWorkletBlobUrl());
+        workletNode = new AudioWorkletNode(micContext, MIC_WORKLET_NAME, {
+          processorOptions: { inputSampleRate: micContext.sampleRate, targetSampleRate: 16000 },
+        });
+        micSource.connect(workletNode);
+
+        playbackContext = new AudioContext({ sampleRate: 24000 });
+        outputAnalyser = playbackContext.createAnalyser();
+        outputAnalyser.fftSize = 512;
+      } catch (err) {
+        if (!isCurrent()) return;
+        setStatus("error");
+        setErrorKind("socket_error");
+        setErrorText(`Could not start audio: ${errorMessage(err)}`);
+        return;
+      }
+      if (!isCurrent()) {
+        stream.getTracks().forEach((t) => t.stop());
+        micContext.close().catch(() => {});
+        playbackContext.close().catch(() => {});
+        return;
+      }
+
+      // Past this point we own the generation uncontested (everything above
+      // was a single synchronous stretch since the last await) -- safe to
+      // publish into the shared refs the rest of the hook reads from.
       micStreamRef.current = stream;
-
-      const micContext = new AudioContext();
       micContextRef.current = micContext;
-      const micSource = micContext.createMediaStreamSource(stream);
-      const micAnalyser = micContext.createAnalyser();
-      micAnalyser.fftSize = 512;
-      micSource.connect(micAnalyser);
       micAnalyserRef.current = micAnalyser;
-
-      await micContext.audioWorklet.addModule(micWorkletBlobUrl());
-      const workletNode = new AudioWorkletNode(micContext, MIC_WORKLET_NAME, {
-        processorOptions: { inputSampleRate: micContext.sampleRate, targetSampleRate: 16000 },
-      });
-      micSource.connect(workletNode);
+      playbackContextRef.current = playbackContext;
+      nextPlayTimeRef.current = playbackContext.currentTime;
+      outputAnalyserRef.current = outputAnalyser;
       workletNode.port.onmessage = (event: MessageEvent<ArrayBuffer>) => {
         const data = arrayBufferToBase64(event.data);
         sessionRef.current?.sendRealtimeInput({ audio: { data, mimeType: "audio/pcm;rate=16000" } });
       };
-
-      const playbackContext = new AudioContext({ sampleRate: 24000 });
-      playbackContextRef.current = playbackContext;
-      nextPlayTimeRef.current = playbackContext.currentTime;
-      const outputAnalyser = playbackContext.createAnalyser();
-      outputAnalyser.fftSize = 512;
-      outputAnalyserRef.current = outputAnalyser;
-
       startLevelMeter();
 
       const callbacks: LiveCallbacks = {
         onopen: () => {
+          if (!isCurrent()) return;
           setStatus("active");
           startedAtRef.current = Date.now();
           timerIdRef.current = setInterval(() => setElapsedMs(Date.now() - startedAtRef.current), 250);
         },
-        onmessage: (raw) => handleMessage(raw as LiveServerMessage),
+        onmessage: (raw) => {
+          if (isCurrent()) handleMessage(raw as LiveServerMessage);
+        },
         onerror: (err) => {
+          if (!isCurrent()) return;
           setStatus("error");
           setErrorKind("socket_error");
           setErrorText(errorMessage(err));
         },
         onclose: () => {
+          if (!isCurrent()) return;
           setStatus((cur) => (cur === "error" ? cur : "ended"));
         },
       };
 
       try {
         if (fake) {
-          sessionRef.current = createFakeLiveSession(callbacks);
+          sessionRef.current = createFakeLiveSession(callbacks, lead.name);
         } else {
           const { GoogleGenAI } = await import("@google/genai");
           const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: "v1alpha" } });
-          sessionRef.current = (await ai.live.connect({
-            model,
-            config,
-            callbacks,
-          })) as unknown as LiveSessionLike;
+          const session = (await ai.live.connect({ model, config, callbacks })) as unknown as LiveSessionLike;
+          if (!isCurrent()) {
+            session.close();
+            return;
+          }
+          sessionRef.current = session;
         }
       } catch (err) {
+        if (!isCurrent()) return;
         setStatus("error");
         setErrorKind("socket_error");
         setErrorText(errorMessage(err));
       }
     })();
-  }, [status, runId, lead.id, handleMessage, startLevelMeter]);
+  }, [runId, lead.id, lead.name, handleMessage, startLevelMeter]);
+
+  // Paired with teardown() so React 18 dev StrictMode's mount -> cleanup ->
+  // mount cycle produces one clean call, not two overlapping ones (see the
+  // generationRef comment above teardown/start).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    start();
+    return () => teardown();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleMute = useCallback(() => {
     const stream = micStreamRef.current;
