@@ -397,3 +397,42 @@ def test_prepare_receptionists_error_when_llm_fails(tmp_path):
 
     assert observation.startswith("error:")
     assert state.leads["osm:node/1"].receptionist_prompt == ""
+
+
+def test_wrap_up_guard_stops_fruitless_searching(tmp_path, monkeypatch):
+    """Searches that keep finding nothing new must not burn the whole step
+    budget: after MAX_EMPTY_SEARCHES the harness forces the rest of the
+    pipeline, even if the LLM keeps asking to search, and says so in the trace."""
+    monkeypatch.setattr(agent_mod, "geocode", lambda place: BBox(18.4, 73.7, 18.6, 73.9))
+    monkeypatch.setattr(agent_mod, "search", lambda bbox, niches, limit: [_fake_lead(1), _fake_lead(2)])
+
+    search = {"thought": "keep looking", "action": "search_businesses", "args": {"niches": ["physio"]}}
+    responses = [
+        {"place": "Pune", "niches": ["physio"], "target_count": 15, "plan": ["search", "finish"]},
+        {"thought": "geocode", "action": "geocode", "args": {"place": "Pune"}},
+    ] + [search] * 9
+    agent = Agent(ScriptedLLM(responses), Memory(tmp_path / "data"), max_steps=12, runs_dir=tmp_path / "runs")
+    for name in ("enrich", "write_hooks", "prepare_receptionists"):
+        _, schema, desc = agent._registry[name]
+        agent._registry[name] = (lambda state, args, name=name: f"{name} ok", schema, desc)
+
+    state = agent.run("Find 15 physio clinics in Pune")
+
+    actions = [s.action for s in state.step_log]
+    assert actions == [
+        "geocode", "search_businesses", "search_businesses", "search_businesses", "search_businesses",
+        "enrich", "score", "write_hooks", "prepare_receptionists", "finish",
+    ]
+    assert state.status == "done"
+    assert state.step_log[5].thought.startswith("[wrap-up guard]")
+    assert any("no new businesses" in note for note in state.notes)
+    assert "stopped early" in state.final_answer
+
+
+def test_state_summary_lists_niche_keys_and_budget(tmp_path):
+    agent = Agent(ScriptedLLM([]), Memory(tmp_path / "data"), max_steps=20, runs_dir=tmp_path / "runs")
+    state = agent_mod.RunState(run_id="r", goal="g")
+    summary = agent._state_summary(state, step_n=17, wrap_up_reason="only 4 steps remain")
+    assert "physio" in summary and "dentist" in summary
+    assert "step 17 of 20" in summary
+    assert "WRAP UP NOW: only 4 steps remain" in summary

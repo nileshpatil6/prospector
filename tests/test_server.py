@@ -296,3 +296,15 @@ def test_messages_endpoint_persists_and_validates(tmp_path):
         "/api/runs/nope/leads/osm:node/1/messages",
         json={"caller_name": "a", "callback_number": "b", "reason": "c"},
     ).status_code == 404
+
+
+def test_get_run_is_running_not_404_before_first_state_write(tmp_path):
+    from server import create_app
+    from fastapi.testclient import TestClient
+    app = create_app(runs_dir=tmp_path / "runs", data_dir=tmp_path / "data")
+    app.state.active_run_id = "run_123"
+    app.state.active_goal = "Find dentists"
+    client = TestClient(app)
+    body = client.get("/api/runs/run_123").json()
+    assert body["status"] == "running" and body["goal"] == "Find dentists"
+    assert client.get("/api/runs/run_999").status_code == 404

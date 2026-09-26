@@ -28,6 +28,11 @@ MAX_FAIL_REPEATS = 3
 MAX_DEEP_RESEARCH = 8
 MAX_WRITE_HOOKS = 10
 MAX_CONSECUTIVE_LLM_FAILURES = 2
+# Steps kept back for enrich -> score -> write_hooks -> prepare_receptionists -> finish.
+WRAP_UP_RESERVE = 5
+# Consecutive searches that add no new leads before the agent stops searching.
+MAX_EMPTY_SEARCHES = 3
+SEARCH_ACTIONS = {"geocode", "search_businesses", "widen_area"}
 
 
 def _truncate(text: str, limit: int = TRUNCATE_LEN) -> str:
@@ -399,7 +404,27 @@ class Agent:
 
     # -- State summary for the LLM ------------------------------------------
 
-    def _state_summary(self, state: RunState) -> str:
+    def _next_wrap_up_action(self, state: RunState) -> tuple[str, dict]:
+        """The next pipeline stage still missing, used once searching is over.
+        Order: enrich -> score -> write_hooks -> prepare_receptionists -> finish."""
+        done = {s.action for s in state.step_log if s.ok}
+        leads = list(state.leads.values())
+        if leads and "enrich" not in done:
+            return "enrich", {"max_leads": len(leads)}
+        if leads and "score" not in done:
+            return "score", {}
+        if leads and "write_hooks" not in done:
+            return "write_hooks", {}
+        if leads and "prepare_receptionists" in self._registry and "prepare_receptionists" not in done:
+            return "prepare_receptionists", {}
+        summary = (
+            f"Found {len(leads)} lead(s) for: {state.goal}. Searching stopped early because "
+            "further searches were not finding new businesses, so the run finished with what "
+            "was found rather than padding the list."
+        )
+        return "finish", {"summary": summary}
+
+    def _state_summary(self, state: RunState, step_n: int = 0, wrap_up_reason: str = "") -> str:
         leads = state.leads.values()
         found = len(state.leads)
         enriched = sum(1 for ld in leads if ld.site_ok is not None or ld.fetch_error != "")
@@ -430,7 +455,18 @@ class Agent:
 
         notes = "\n".join(state.notes) if state.notes else "(none)"
 
+        budget = ""
+        if step_n:
+            budget = f"Step budget: this is step {step_n} of {self.max_steps} ({self.max_steps - step_n} left after this one).\n"
+        if wrap_up_reason:
+            budget += (
+                f"WRAP UP NOW: {wrap_up_reason}. Do not search, geocode or widen again. "
+                "Go through enrich, score, write_hooks, prepare_receptionists, then finish.\n"
+            )
+
         return (
+            budget
+            + f"Known niche keys for search_businesses: {sorted(NICHES.keys())}\n"
             f"Counts: found={found}, enriched={enriched}, researched={researched}, scored={scored}\n"
             f"Top leads (id | name | score | website):\n{leads_block}\n\n"
             f"Last observations:\n" + ("\n".join(last_observations) or "(none yet)") + "\n\n"
@@ -484,9 +520,18 @@ class Agent:
         fail_counts: dict[tuple[str, str], int] = {}
         blocked: set[tuple[str, str]] = set()
         consecutive_llm_failures = 0
+        empty_searches = 0
 
         for n in range(1, self.max_steps + 1):
             start = time.monotonic()
+            # Knowing when to stop: once searches stop adding leads, or only the
+            # reserve of steps is left, the agent must finish the pipeline with
+            # what it has instead of burning the budget on more searching.
+            wrap_up_reason = ""
+            if empty_searches >= MAX_EMPTY_SEARCHES:
+                wrap_up_reason = f"the last {empty_searches} searches found no new businesses"
+            elif self.max_steps - n < WRAP_UP_RESERVE and state.leads:
+                wrap_up_reason = f"only {self.max_steps - n + 1} steps remain"
             try:
                 decision = self.llm.json(
                     system=(
@@ -497,7 +542,8 @@ class Agent:
                         "(e.g. widen_area). Call finish once the goal is satisfied."
                     ),
                     user=(
-                        f"Goal: {goal}\nPlan: {state.plan}\n\n{self._state_summary(state)}"
+                        f"Goal: {goal}\nPlan: {state.plan}\n\n"
+                        f"{self._state_summary(state, step_n=n, wrap_up_reason=wrap_up_reason)}"
                     ),
                     schema_hint=LOOP_SCHEMA_HINT,
                 )
@@ -540,6 +586,17 @@ class Agent:
                 continue
             args = raw_args
 
+            if wrap_up_reason and action in SEARCH_ACTIONS:
+                # The LLM was told to wrap up but still chose to search. The
+                # harness enforces the stop and records why, in the thought, so
+                # the override is visible in the trace rather than hidden.
+                forced_action, args = self._next_wrap_up_action(state)
+                thought = (
+                    f"[wrap-up guard] Wanted {action}, but {wrap_up_reason}; "
+                    f"moving on to {forced_action}. {thought}"
+                ).strip()
+                action = forced_action
+
             args_key = (action, json.dumps(args, sort_keys=True, default=str))
 
             if args_key in blocked:
@@ -572,6 +629,19 @@ class Agent:
                     )
 
             self._record_step(state, step)
+
+            # Only successful searches count: a failed one (bad niche, Overpass
+            # timeout) says nothing about whether more leads exist.
+            if action == "search_businesses" and ok:
+                new_match = re.search(r"(\d+) new", observation)
+                if new_match and int(new_match.group(1)) > 0:
+                    empty_searches = 0
+                else:
+                    empty_searches += 1
+                    if empty_searches == MAX_EMPTY_SEARCHES:
+                        state.notes.append(
+                            f"{empty_searches} searches in a row found no new businesses; stopping the search"
+                        )
 
             if action == "finish" and ok:
                 return

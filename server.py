@@ -165,6 +165,7 @@ def create_app(
                 raise HTTPException(400, str(exc))
             run_id = f"run_{int(time.time())}"
             app.state.active_run_id = run_id
+            app.state.active_goal = goal
 
         agent = Agent(
             llm, app.state.memory,
@@ -211,6 +212,13 @@ def create_app(
     def get_run(run_id: str) -> dict:
         state_path = app.state.runs_dir / run_id / "state.json"
         if not state_path.exists():
+            # The run's first state.json is written after the planning LLM
+            # call, so a client polling right after POST /api/runs would
+            # otherwise see a 404 for a run that is in fact starting.
+            if run_id == app.state.active_run_id:
+                return {"run_id": run_id, "goal": getattr(app.state, "active_goal", ""),
+                        "plan": [], "step_log": [], "leads": {}, "notes": [],
+                        "status": "running", "final_answer": "", "labels": {}}
             raise HTTPException(404, f"run {run_id!r} not found")
         data = _read_json_retrying(state_path)
         lead_ids = set(data.get("leads", {}).keys())
