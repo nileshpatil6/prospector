@@ -6,10 +6,16 @@ import L from "leaflet";
 import { MapContainer, Marker, TileLayer, useMap } from "react-leaflet";
 import type { BBox, Label, Lead } from "@/lib/types";
 
+// CARTO's free basemaps.cartocdn.com raster CDN now gates anonymous
+// requests behind an API key -- it still answers with HTTP 200, but every
+// tile is a placeholder reading "API KEY REQUIRED" instead of a real
+// basemap. Esri's World Dark Gray Canvas is a genuine dark raster basemap
+// that still serves anonymously with no signup; note its tile path is
+// {z}/{y}/{x} (row before column), the opposite of the CARTO/OSM order.
 const TILE_URL =
-  "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
+  "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}";
 const ATTRIBUTION =
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+  "Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ, TomTom, Intermap, iPC, USGS, FAO, NPS, NRCAN, GeoBase, Kadaster NL, Ordnance Survey, Esri Japan, METI, Esri China (Hong Kong), and the GIS User Community";
 
 function scoreColor(lead: Lead): string {
   if (lead.reasons.length === 0) return "#5b6270"; // not yet scored
@@ -109,7 +115,7 @@ export default function ProspectorMap({
     // attributes to the DOM, so the test hook lives on this wrapper div.
     <div className="h-full w-full" data-testid="prospector-map">
       <MapContainer center={center} zoom={bbox ? 12 : 4} scrollWheelZoom className="h-full w-full">
-        <TileLayer url={TILE_URL} attribution={ATTRIBUTION} />
+        <TileLayer url={TILE_URL} attribution={ATTRIBUTION} maxZoom={18} maxNativeZoom={16} />
         <FitToData bbox={bbox} leads={leads} />
 
         {sweeping && bbox && (
