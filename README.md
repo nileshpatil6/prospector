@@ -112,6 +112,41 @@ number computed over 1-2 points.
   `chat_known` is true -- a lead that was never enriched gets no credit for an
   absence it was never actually checked for.
 
+## Live AI receptionist calls
+
+Every lead is a business Prospector thinks would benefit from an AI phone
+receptionist -- so the top leads on a run get a live, callable demo of exactly
+that, in the browser.
+
+- After `write_hooks`, the agent can call `prepare_receptionists` to have the
+  LLM write a persona system instruction for up to 3 top leads, using *only*
+  observed facts (business name, niche, address, observed opening hours) --
+  the same honesty invariant as `write_hooks`: no invented staff names,
+  prices, services, or phone numbers. Any question it can't answer from the
+  facts gets "a staff member will call you back", with an offer to take a
+  message. If a lead never went through that tool, `/live-session` builds the
+  same persona deterministically from the same template at request time.
+- Clicking **"Call its AI receptionist"** (on the run page's top lead cards,
+  or in the review detail panel) opens a call panel that connects to the
+  [Gemini Live API](https://ai.google.dev/gemini-api/docs/live) with that
+  persona. **The real `GEMINI_API_KEY` never reaches the browser.** The
+  server (`prospector/live.py`) mints a short-lived (30 min), single-use
+  ephemeral token whose `live_connect_constraints` lock it to one model and
+  one fully-formed session config (the persona, the voice, the tool
+  declarations) -- the browser can connect with it, but can't repurpose it for
+  a different model or a different business's persona.
+- Mic audio is downsampled to 16-bit PCM at 16kHz in an inline AudioWorklet
+  and streamed to the Live API; output audio (PCM16 at 24kHz) is scheduled
+  gaplessly for playback and stops immediately on a `serverContent.interrupted`
+  (barge-in). Live captions show both sides of the conversation as they
+  transcribe. If the model calls its one tool, `take_message`, the panel POSTs
+  it to `/api/runs/{run_id}/leads/{lead_id}/messages`, shows a "message taken"
+  card, and reports the tool result back to the model.
+- Disclosure: this uses `gemini-3.8-live` (a preview model, overridable via
+  `GEMINI_LIVE_MODEL`), on the free tier. It's a browser-audio demo of the
+  receptionist persona, not a production telephony integration -- there's no
+  real phone number and no PSTN involved.
+
 ## Feature catalogue
 
 `prospector/features.py` computes ~20 deterministic, side-effect-free features from a
@@ -147,6 +182,50 @@ python cli.py run "Find 30 dental clinics in Pune that would buy an AI phone rec
 python cli.py label <run_id>   # mark leads good/bad
 python cli.py learn            # propose + validate new rules from labels
 ```
+
+## Tests
+
+Backend (pytest -- no network access, no real LLM calls; every test injects a
+scripted LLM and/or monkeypatches OSM/website calls):
+
+```bash
+pip install -r requirements.txt
+python -m pytest
+```
+
+Frontend end-to-end (Playwright, chromium only, fully offline):
+
+```bash
+cd web
+npm install
+npx playwright install chromium   # first time only
+npm run test:e2e
+```
+
+`test:e2e` starts its own scripted FastAPI backend (`tests/e2e_server.py`, port
+8010 -- a deterministic stand-in LLM plus monkeypatched OSM/website tools, zero
+network access, zero Gemini calls) and a dedicated Next dev server (port 3010),
+both separate from the demo's normal 8000/3000 ports so it's safe to run
+alongside `dev.ps1`. It drives the full run -> review -> learn -> live-call
+flow through the real FastAPI routes and the real agent loop, and writes
+1440x900 screenshots of each page to `docs/screenshots/`.
+
+## Screenshots
+
+All captured from the scripted end-to-end suite (`npm run test:e2e`), not a
+live Gemini run -- see [Tests](#tests) above.
+
+| Run (in progress) | Run (done) |
+|---|---|
+| ![Run in progress](docs/screenshots/run.png) | ![Run done](docs/screenshots/run-done.png) |
+
+| Review | Learn |
+|---|---|
+| ![Review](docs/screenshots/review.png) | ![Learn](docs/screenshots/learn.png) |
+
+| Runs history | Live AI receptionist call |
+|---|---|
+| ![Runs](docs/screenshots/runs.png) | ![Call panel](docs/screenshots/call.png) |
 
 ## Sample input/output
 
