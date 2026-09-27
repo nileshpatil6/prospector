@@ -11,6 +11,7 @@ Run with: uvicorn server:app --port 8000
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -129,6 +130,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origin_regex=r"http://(localhost|127\.0\.0\.1):\d+",
+        # Deployed frontends, e.g. CORS_ORIGINS=https://prospector.vercel.app
+        allow_origins=[o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
         allow_methods=["*"],
         allow_headers=["*"],
     )
