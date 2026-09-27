@@ -1,6 +1,6 @@
 # Prospector
 
-> ### 🔴 Live demo: **[prospector-web-nilesh.onrender.com](https://prospector-web-nilesh.onrender.com/)**
+> ### Live demo: **[prospector-web-nilesh.onrender.com](https://prospector-web-nilesh.onrender.com/)**
 > Free hosting: the first visit can take about a minute while the server wakes up.
 
 An agentic lead-prospecting system built for the Techvruk "AI Agentic System Challenge".
