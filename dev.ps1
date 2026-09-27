@@ -7,7 +7,15 @@
 
 $root = $PSScriptRoot
 
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$root'; uvicorn server:app --port 8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$root'; python -m uvicorn server:app --port 8000"
 
-Set-Location (Join-Path $root "web")
-npm run dev
+Push-Location (Join-Path $root "web")
+try {
+    if (-not (Test-Path "node_modules\.bin\next.cmd")) {
+        Write-Host "Installing frontend packages (first run only)..."
+        npm install
+    }
+    npm run dev
+} finally {
+    Pop-Location
+}
