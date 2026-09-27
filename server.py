@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -352,4 +353,15 @@ def create_app(
     return app
 
 
+def _seed_demo_runs(runs_dir: Path = Path("runs"), demo_dir: Path = Path("demo_runs")) -> None:
+    """Copy bundled real runs in, so a fresh deploy (empty disk) still has something to show."""
+    if not demo_dir.is_dir():
+        return
+    for src in demo_dir.iterdir():
+        dst = runs_dir / src.name
+        if src.is_dir() and not dst.exists():
+            shutil.copytree(src, dst)
+
+
+_seed_demo_runs()
 app = create_app()

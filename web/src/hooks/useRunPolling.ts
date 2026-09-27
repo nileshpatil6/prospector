@@ -34,9 +34,17 @@ export function useRunPolling(runId: string | null) {
           intervalRef.current = null;
         }
       } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes("not found")) {
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          setError("This run no longer exists. The server restarted, so please start the run again.");
+          return;
         }
+        setError(message);
       }
     }
 
