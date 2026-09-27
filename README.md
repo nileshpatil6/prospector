@@ -1,5 +1,8 @@
 # Prospector
 
+> ### 🔴 Live demo: **[prospector-web-nilesh.onrender.com](https://prospector-web-nilesh.onrender.com/)**
+> Free hosting: the first visit can take about a minute while the server wakes up.
+
 An agentic lead-prospecting system built for the Techvruk "AI Agentic System Challenge".
 
 Give it a goal in plain English -- *"Find 30 dental clinics in Pune that would buy an
@@ -245,22 +248,4 @@ live Gemini run -- see [Tests](#tests) above.
 
 ## AI tools used
 
-Claude Code was used as a coding assistant to help write this implementation from a
-hand-authored design contract. The architecture, the agentic loop design, the
-learning/validation algorithm, and all product decisions are the author's; the
-assistant implemented them under direction and review.
-
-## Limitations
-
-- OSM coverage is uneven outside major metros; some real businesses simply aren't
-  tagged and won't be found no matter how much the area is widened.
-- Website enrichment is a plain HTTP fetch with BeautifulSoup -- JS-rendered sites
-  (no server-side HTML) will show as `fetch_error`/no signals even if they have a
-  chat widget or booking flow.
-- The learning loop needs at least 12 labels with both classes present before it will
-  propose anything; early on, scoring is just the fixed base heuristic.
-- Holdout accuracy is measured on whatever the user has labeled so far, which is
-  small and non-random (it's whichever leads the user reviewed) -- treat the accuracy
-  chart as a trend indicator across runs, not a rigorous ML benchmark.
-- `write_hooks` and `deep_research` cost an extra LLM/HTTP call per lead, so the
-  agent only runs them on a capped top-N subset, not every lead found.
+Claude Code was used as a coding assistant. The design, the agent loop and all product decisions are my own.
