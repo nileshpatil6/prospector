@@ -39,19 +39,19 @@ in the final report traces back to something actually observed.
 
 ```mermaid
 flowchart TD
-    UI[Next.js UI] -->|POST /api/runs, GET /api/runs/:id, POST /api/labels, POST /api/learn| API[FastAPI: server.py]
-    API -->|background thread| G[Goal text]
-    G --> P[PLAN: one LLM call]
-    P --> S[RunState: place, niches, target_count, plan]
-    S --> L{Loop until finish or max_steps}
-    L --> T[LLM: thought + action + args]
-    T --> X[Execute tool]
-    X --> O[Observation]
-    O -->|persist state.json + trace.jsonl| L
-    O -->|failure or low results| T
-    L -->|finish| F[report.md + leads.csv]
-    API --> MEM[Memory: rules, labels, history]
-    API --> LRN[Learner: learn]
+    UI["Next.js UI"] -->|"POST /api/runs, GET /api/runs/:id, POST /api/labels, POST /api/learn"| API["FastAPI: server.py"]
+    API -->|"background thread"| G["Goal text"]
+    G --> P["PLAN: one LLM call"]
+    P --> S["RunState: place, niches, target_count, plan"]
+    S --> L{"Loop until finish or max_steps"}
+    L --> T["LLM: thought + action + args"]
+    T --> X["Execute tool"]
+    X --> O["Observation"]
+    O -->|"persist state.json + trace.jsonl"| L
+    O -->|"failure or low results"| T
+    L -->|"finish"| F["report.md + leads.csv"]
+    API --> MEM["Memory: rules, labels, history"]
+    API --> LRN["Learner: learn"]
 ```
 
 Tools touch three real data sources:
@@ -65,17 +65,17 @@ Tools touch three real data sources:
 
 ```mermaid
 flowchart LR
-    U[User marks lead good/bad] --> M[Memory: labels.jsonl]
-    M --> SP[Deterministic 3-way split\nby sha1(lead_id) % 5:\n0=test 1=select rest=train]
-    SP --> TR[Train: find leads the\ncurrent rules mis-score]
-    TR --> LLM[ONE LLM call: propose up to\n5 candidate rules from misses\n+ feature catalogue]
-    LLM --> V[Validate: object shape,\nfeature exists, op matches type,\nweight numeric + in range]
-    V --> H[Score each candidate ALONE\non the SELECT split]
-    H -->|gain > 0 AND train acc\ndrop <= 2 pts| KEEP[Keep, add greedily,\nre-check against growing set]
-    H -->|else| REJ[Reject + log reason]
-    KEEP --> RM[Try removing each old rule\non SELECT; drop if it doesn't\nhurt -- or must strictly help\nwhen select has < 10 labels]
-    RM --> REP[Report acc + p@k on\nTEST only, never select]
-    REP --> HIST[history.jsonl: acc_before/after,\np@k before/after]
+    U["User marks lead good/bad"] --> M["Memory: labels.jsonl"]
+    M --> SP["Deterministic 3-way split<br/>by sha1(lead_id) % 5:<br/>0=test 1=select rest=train"]
+    SP --> TR["Train: find leads the<br/>current rules mis-score"]
+    TR --> LLM["ONE LLM call: propose up to<br/>5 candidate rules from misses<br/>+ feature catalogue"]
+    LLM --> V["Validate: object shape,<br/>feature exists, op matches type,<br/>weight numeric + in range"]
+    V --> H["Score each candidate ALONE<br/>on the SELECT split"]
+    H -->|"gain > 0 AND train acc<br/>drop at most 2 pts"| KEEP["Keep, add greedily,<br/>re-check against growing set"]
+    H -->|"else"| REJ["Reject + log reason"]
+    KEEP --> RM["Try removing each old rule<br/>on SELECT; drop if it doesn't<br/>hurt -- or must strictly help<br/>when select has fewer than 10 labels"]
+    RM --> REP["Report acc + p@k on<br/>TEST only, never select"]
+    REP --> HIST["history.jsonl: acc_before/after,<br/>p@k before/after"]
 ```
 
 The LLM proposing rules **never sees select or test data** -- only misclassified
